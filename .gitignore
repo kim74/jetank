@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Robot artefacts (keep out of git; use LFS or external storage)
+data/
+recordings/
+models/*.onnx
+models/*.engine
+models/*.pt
+*.mp4
+*.h264
+
+# Local config / secrets
+.env
+config/local*.yaml
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
