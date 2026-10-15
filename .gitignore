@@ -31,3 +31,20 @@ config/jetank.yaml
 
 # Model weights and TensorRT engines (large, machine-specific)
 models/
+
+# From kim74/jetank
+# Python
+.venv/
+venv/
+# Robot artefacts (keep out of git; use LFS or external storage)
+data/
+recordings/
+*.mp4
+*.h264
+# Local config / secrets
+.env
+config/local*.yaml
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
