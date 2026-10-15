@@ -1,0 +1,84 @@
+# Packaging for the new `jetank` package (src/jetank).
+# hatchling is used on purpose: it ignores the legacy setup.py, which would otherwise run
+# cmake/make and package the old `jetbot` module on every install.
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jetank"
+version = "0.1.0"
+description = "Control software for the Waveshare JETANK on a Jetson Orin Nano"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "pyyaml>=6",
+    "numpy>=1.24,<2",
+]
+
+[project.optional-dependencies]
+# Hardware backends. OpenCV comes from the JetPack apt package (GStreamer-enabled build),
+# so it is intentionally not listed here — installing opencv-python from PyPI would shadow it.
+hardware = ["smbus2>=0.4"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+]
+
+[project.scripts]
+jetank = "jetank.app.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jetank"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["jetbot", "notebooks", "docker", "scripts", "build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF", "PT", "ANN", "TC"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.flake8-type-checking]
+# pydantic resolves field annotations at runtime, so their imports must stay real.
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*", "smbus2"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not hardware' --cov=jetank --cov-report=term-missing"
+markers = [
+    "hardware: needs the real robot or camera; run explicitly with `pytest -m hardware`",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["jetank"]
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

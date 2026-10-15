@@ -3,3 +3,31 @@
 
 # MkDocs documentation
 site/
+
+# Python / build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# CMake output from the legacy setup.py build
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+jetbot/ssd_tensorrt/*.so
+
+# Local config overrides and captures
+config/jetank.yaml
+*.jpg
+!assets/**/*.jpg
+!docs/**/*.jpg
+
+# Model weights and TensorRT engines (large, machine-specific)
+models/

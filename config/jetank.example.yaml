@@ -1,0 +1,43 @@
+# Example JETANK configuration. Copy to config/jetank.yaml (git-ignored) and adjust.
+# Any value can be overridden by environment variables, e.g. JETANK_MOTORS__BACKEND=hardware
+
+motors:
+  backend: fake          # "hardware" only once the JETANK is wired and the bus is verified
+  i2c_bus: 7             # Orin Nano header pins 3/5; verify with `i2cdetect -y -r 7`
+  i2c_address: 0x60
+  pwm_frequency_hz: 1526  # PCA9685 maximum
+  left:  {pwm_in_a: 1, pwm_in_b: 0, trim: 1.0, inverted: false}
+  right: {pwm_in_a: 2, pwm_in_b: 3, trim: 1.0, inverted: false}
+
+drive:
+  max_speed: 0.5          # fraction of full motor power for a full-scale command
+  watchdog_timeout_s: 0.5 # motors stop if no command arrives within this time
+
+camera:
+  backend: hardware       # IMX219 on CAM0
+  sensor_id: 0
+  capture_width: 1640
+  capture_height: 1232
+  fps: 30
+  width: 640
+  height: 480
+  flip_method: 0
+
+detector:
+  backend: tensorrt       # build the engine first: scripts/export_detector.sh yolo11n 640
+  engine_path: models/yolo11n_640_fp16.engine
+  confidence_threshold: 0.4
+  nms_iou_threshold: 0.45
+  responses:              # labels not listed are ignored
+    cat: chase
+    dog: chase
+    person: alert         # people are recorded, never chased
+
+tracker:
+  match_iou_threshold: 0.3
+  confirm_hits: 3         # frames an object must be seen before it counts
+  max_age_s: 1.0
+
+events:
+  directory: events       # annotated snapshots + JSON records
+  label_cooldown_s: 30
