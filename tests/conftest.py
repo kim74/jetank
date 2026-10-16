@@ -11,8 +11,13 @@ from jetank.drivers.fake import FakeClock, FakeI2CBus, FakeMotorDriver
 
 
 @pytest.fixture(autouse=True)
-def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep JETANK_* variables from the developer's shell out of the tests."""
+def _isolate_environment(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep JETANK_* variables from the developer's shell out of the tests.
+
+    Hardware tests keep them, so the robot's bus and wiring can be overridden from the shell.
+    """
+    if request.node.get_closest_marker("hardware") is not None:
+        return
     for name in list(os.environ):
         if name.startswith("JETANK_"):
             monkeypatch.delenv(name)

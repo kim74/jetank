@@ -37,10 +37,10 @@ An autonomous **garden guard**: the JETANK watches the garden, detects intruding
 
 | Subsystem        | Interface                          | Notes |
 |------------------|------------------------------------|-------|
-| Track motors     | I2C, PCA9685 PWM (max 1526 Hz) + TB6612 H-bridge | Orin Nano 40-pin header pins 3/5 = `/dev/i2c-7`, pins 27/28 = `/dev/i2c-1` (Nano used bus 1). Confirm with `i2cdetect -y -r <bus>`. |
+| Track motors     | I2C, PCA9685 PWM (max 1526 Hz) + TB6612 H-bridge | **Verified:** PCA9685 at `0x60` on `/dev/i2c-7` (header pins 3/5); `0x70` is its all-call address. Motor channel map/direction not yet verified. |
 | Arm / camera pan | Serial bus servos (SCServo/ST)     | UART on header pins 8/10 → `/dev/ttyTHS1` on Orin Nano JP6; user must be in `dialout`. |
-| OLED display     | I2C, SSD1306 (typ. `0x3C`)         | Optional. |
-| Battery monitor  | I2C, INA219 (address board-specific) | Optional. |
+| OLED display     | I2C, SSD1306                       | Optional. Responds at `0x3C` on `/dev/i2c-7`. |
+| Battery monitor  | I2C, INA219                        | Optional. Responds at `0x41` on `/dev/i2c-7`. |
 | Camera           | CSI, IMX219, GStreamer `nvarguscamerasrc` | **Verified** on CAM0 (`/dev/video0`), 1640x1232@30 → 640x480. Wide-angle module shows a pink cast with default ISP tuning. Never block the control loop on frame capture. |
 
 Bus numbers, addresses and device paths are **configuration, never constants in code** (see
