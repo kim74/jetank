@@ -7,14 +7,21 @@ Layer: app
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import json
 import logging
+import socket
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jetank.app.wiring import build_camera
+from jetank.app.signals import raise_on_termination_signals
+from jetank.app.teleop_server import TeleopServer, load_page
+from jetank.app.wiring import build_camera, build_motor_driver
 from jetank.config.settings import load_settings
+from jetank.control.drive import DriveController
+from jetank.control.teleop import TeleopSession
 from jetank.drivers.system_clock import SystemClock
 from jetank.errors import JetankError
 
@@ -45,6 +52,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_WARMUP_FRAMES,
         help="frames to discard first so auto-exposure can settle (default: %(default)s)",
     )
+
+    commands.add_parser(
+        "teleop", help="serve a remote-control web page (no authentication: trusted LAN only)"
+    )
     return parser
 
 
@@ -65,6 +76,25 @@ def _cmd_snapshot(settings: JetankSettings, output: Path, warmup: int) -> int:
         camera.close()
     _write_image(output, frame)
     print(f"saved {frame.width}x{frame.height} frame to {output}")
+    return 0
+
+
+def _cmd_teleop(settings: JetankSettings) -> int:
+    clock = SystemClock()
+
+    def announce(port: int) -> None:
+        print(f"remote control at http://{socket.gethostname()}.local:{port}/ (Ctrl-C stops)")
+
+    with (
+        contextlib.closing(build_motor_driver(settings.motors)) as motors,
+        DriveController(motors, clock, settings.drive) as drive,
+        raise_on_termination_signals(),
+    ):
+        server = TeleopServer(TeleopSession(drive), settings.teleop, load_page())
+        try:
+            asyncio.run(server.serve(on_ready=announce))
+        except KeyboardInterrupt as exc:
+            logger.info("teleop stopped: %s", exc or "Ctrl-C")
     return 0
 
 
@@ -90,6 +120,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = load_settings(args.config)
         if args.command == "config":
             return _cmd_config(settings)
+        if args.command == "teleop":
+            return _cmd_teleop(settings)
         return _cmd_snapshot(settings, args.output, args.warmup)
     except JetankError as exc:
         print(f"error: {exc}", file=sys.stderr)

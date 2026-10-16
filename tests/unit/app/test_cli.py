@@ -46,3 +46,22 @@ def test_snapshot_unwritable_path_reports_error(
     pytest.importorskip("cv2")
     assert main(["snapshot", str(tmp_path / "frame.unknown"), "--warmup", "0"]) == 1
     assert "could not write image" in capsys.readouterr().err
+
+
+def test_teleop_stops_and_closes_motors_on_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeMotorDriver
+
+    motors = FakeMotorDriver()
+    served: list[bool] = []
+
+    async def interrupted_serve(self: object, on_ready: object = None) -> None:
+        served.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    assert main(["teleop"]) == 0
+    assert served == [True]
+    assert motors.closed
+    assert motors.current.is_stopped

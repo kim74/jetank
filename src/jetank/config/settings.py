@@ -106,6 +106,26 @@ class DriveConfig(BaseModel):
     watchdog_timeout_s: float = Field(default=0.5, gt=0.0, le=10.0)
 
 
+class TeleopConfig(BaseModel):
+    """Remote-control web server (``jetank teleop``).
+
+    There is no authentication: anyone who can reach the port can drive the robot, so only
+    run it on a trusted network.
+
+    Attributes:
+        host: Interface to listen on; ``0.0.0.0`` accepts connections from the network.
+        port: TCP port for the control page and its WebSocket; 0 picks a free port.
+        tick_period_s: How often the drive watchdog is checked. Must be well below
+            ``drive.watchdog_timeout_s``.
+    """
+
+    model_config = _SECTION
+
+    host: str = "0.0.0.0"  # reachable from the LAN on purpose
+    port: int = Field(default=8080, ge=0, le=65535)
+    tick_period_s: float = Field(default=0.05, gt=0.0, le=1.0)
+
+
 class CameraConfig(BaseModel):
     """CSI camera (IMX219) captured through GStreamer ``nvarguscamerasrc``.
 
@@ -216,10 +236,20 @@ class JetankSettings(BaseSettings):
 
     motors: MotorsConfig = MotorsConfig()
     drive: DriveConfig = DriveConfig()
+    teleop: TeleopConfig = TeleopConfig()
     camera: CameraConfig = CameraConfig()
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
     events: EventsConfig = EventsConfig()
+
+    @model_validator(mode="after")
+    def _watchdog_checked_often_enough(self) -> JetankSettings:
+        if self.teleop.tick_period_s >= self.drive.watchdog_timeout_s / 2:
+            raise ValueError(
+                "teleop.tick_period_s must be less than half of drive.watchdog_timeout_s, "
+                "or the watchdog stops the tracks late"
+            )
+        return self
 
     @classmethod
     def settings_customise_sources(

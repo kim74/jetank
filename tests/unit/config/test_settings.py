@@ -7,9 +7,11 @@ from pydantic import ValidationError
 
 from jetank.config.settings import (
     CameraConfig,
+    DriveConfig,
     JetankSettings,
     MotorChannelConfig,
     MotorsConfig,
+    TeleopConfig,
     load_settings,
 )
 from jetank.errors import ConfigurationError
@@ -99,3 +101,15 @@ def test_motors_cannot_share_channels() -> None:
 def test_camera_output_cannot_exceed_capture() -> None:
     with pytest.raises(ValidationError, match="must not exceed"):
         CameraConfig(capture_width=640, capture_height=480, width=1280, height=720)
+
+
+def test_teleop_tick_must_be_well_below_watchdog_timeout() -> None:
+    with pytest.raises(ValidationError, match="tick_period_s"):
+        JetankSettings(
+            drive=DriveConfig(watchdog_timeout_s=0.2), teleop=TeleopConfig(tick_period_s=0.1)
+        )
+
+
+def test_teleop_defaults_listen_on_the_network() -> None:
+    teleop = JetankSettings().teleop
+    assert (teleop.host, teleop.port) == ("0.0.0.0", 8080)

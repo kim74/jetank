@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>JETANK Remote</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #677085; --line: #d8dce4;
+    --accent: #2f6fde; --ok: #1f9d55; --warn: #c27c0e; --stop: #d93025;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13161c; --panel: #1c2028; --text: #e7e9ee; --muted: #9aa3b5; --line: #2e3442;
+      --accent: #5b8ff0; --ok: #3cc47c; --warn: #e3a33b; --stop: #f0554a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .status { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+  .status dt { color: var(--muted); }
+  .status dd { margin: 0; font-weight: 600; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--stop); }
+  #pad {
+    position: relative; width: min(100%, 300px); aspect-ratio: 1; margin: 0 auto;
+    border-radius: 50%; border: 2px solid var(--line); background: var(--bg); touch-action: none;
+  }
+  #pad::before, #pad::after { content: ""; position: absolute; background: var(--line); }
+  #pad::before { left: 50%; top: 8%; bottom: 8%; width: 1px; }
+  #pad::after { top: 50%; left: 8%; right: 8%; height: 1px; }
+  #knob {
+    position: absolute; width: 26%; aspect-ratio: 1; left: 37%; top: 37%; border-radius: 50%;
+    background: var(--accent); z-index: 1; pointer-events: none;
+  }
+  #stop {
+    width: 100%; padding: 22px; font-size: 24px; font-weight: 700; letter-spacing: 1px;
+    color: #fff; background: var(--stop); border: 0; border-radius: 12px; cursor: pointer;
+  }
+  #stop:active { filter: brightness(0.85); }
+  label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+  input[type=range] { width: 100%; }
+  .tracks { display: grid; grid-template-columns: auto 1fr 3.5em; gap: 6px 10px; align-items: center; font-size: 14px; }
+  .bar { position: relative; height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
+  .bar span { position: absolute; top: 0; bottom: 0; left: 50%; background: var(--accent); }
+  .hint { font-size: 13px; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>JETANK Remote</h1>
+
+  <section class="panel">
+    <dl class="status">
+      <dt>Connection</dt><dd id="conn" class="warn">connecting…</dd>
+      <dt>Role</dt><dd id="role">–</dd>
+      <dt>Tracks</dt><dd id="moving">–</dd>
+    </dl>
+  </section>
+
+  <button id="stop" type="button">STOP</button>
+
+  <section class="panel">
+    <div id="pad"><div id="knob"></div></div>
+  </section>
+
+  <section class="panel">
+    <label>Speed <span id="speedText"></span>
+      <input id="speed" type="range" min="10" max="100" step="5" value="50">
+    </label>
+  </section>
+
+  <section class="panel tracks">
+    <span>Left</span><div class="bar"><span id="barL"></span></div><span id="valL">0.00</span>
+    <span>Right</span><div class="bar"><span id="barR"></span></div><span id="valR">0.00</span>
+  </section>
+
+  <p class="hint">Drag the pad, or use W A S D / arrow keys. Space or STOP halts the robot.
+    The robot also stops by itself if this page closes, is hidden, or loses the connection.</p>
+</main>
+
+<script>
+"use strict";
+const SEND_PERIOD_MS = 100;   // must stay well below the robot's drive watchdog timeout
+const RECONNECT_MS = 1000;
+
+const $ = (id) => document.getElementById(id);
+let ws = null;
+let pad = { linear: 0, angular: 0 };   // from the on-screen pad, each in [-1, 1]
+const keys = new Set();
+let wasMoving = false;
+
+function speedScale() { return Number($("speed").value) / 100; }
+$("speedText").textContent = $("speed").value + " %";
+$("speed").addEventListener("input", () => { $("speedText").textContent = $("speed").value + " %"; });
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setConn("connected", "ok");
+  ws.onclose = () => {
+    setConn("disconnected – retrying", "bad");
+    $("role").textContent = "–"; $("moving").textContent = "–";
+    setTimeout(connect, RECONNECT_MS);
+  };
+  ws.onmessage = (event) => showStatus(JSON.parse(event.data));
+}
+
+function setConn(text, cls) { $("conn").textContent = text; $("conn").className = cls; }
+
+function send(message) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+}
+
+function showStatus(status) {
+  const driver = status.role === "driver";
+  $("role").textContent = driver ? "driver" : "observer (another client is driving)";
+  $("role").className = driver ? "ok" : "warn";
+  $("moving").textContent = status.moving ? "moving" : "stopped";
+  $("moving").className = status.moving ? "warn" : "";
+  if (status.error) setConn("connected – " + status.error, "warn");
+  else if (ws && ws.readyState === WebSocket.OPEN) setConn("connected", "ok");
+  showTrack("L", status.speeds.left);
+  showTrack("R", status.speeds.right);
+}
+
+function showTrack(side, value) {
+  const bar = $("bar" + side);
+  bar.style.left = (value >= 0 ? 50 : 50 + value * 50) + "%";
+  bar.style.width = Math.abs(value) * 50 + "%";
+  $("val" + side).textContent = value.toFixed(2);
+}
+
+function currentCommand() {
+  let linear = pad.linear, angular = pad.angular;
+  if (keys.size) {
+    linear = (keys.has("up") ? 1 : 0) - (keys.has("down") ? 1 : 0);
+    angular = (keys.has("left") ? 1 : 0) - (keys.has("right") ? 1 : 0);
+  }
+  const s = speedScale();
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  return { linear: clamp(linear * s), angular: clamp(angular * s) };
+}
+
+function stopAll() {
+  keys.clear();
+  pad = { linear: 0, angular: 0 };
+  moveKnob(0, 0);
+  wasMoving = false;
+  send({ type: "stop" });
+}
+
+// Repeating drive messages double as the heartbeat: if they stop, the robot stops.
+setInterval(() => {
+  const cmd = currentCommand();
+  const moving = cmd.linear !== 0 || cmd.angular !== 0;
+  if (moving) send({ type: "drive", linear: cmd.linear, angular: cmd.angular });
+  else if (wasMoving) send({ type: "stop" });
+  wasMoving = moving;
+}, SEND_PERIOD_MS);
+
+$("stop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
+
+// On-screen pad: up = forward, left = turn left (positive angular).
+const padEl = $("pad");
+function moveKnob(x, y) {
+  $("knob").style.transform = `translate(${x * 140}%, ${-y * 140}%)`;
+}
+function padFromEvent(e) {
+  const r = padEl.getBoundingClientRect();
+  let x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  let y = -(((e.clientY - r.top) / r.height) * 2 - 1);
+  const len = Math.hypot(x, y);
+  if (len > 1) { x /= len; y /= len; }
+  moveKnob(x, y);
+  pad = { linear: y, angular: -x };
+}
+padEl.addEventListener("pointerdown", (e) => { padEl.setPointerCapture(e.pointerId); padFromEvent(e); });
+padEl.addEventListener("pointermove", (e) => { if (padEl.hasPointerCapture(e.pointerId)) padFromEvent(e); });
+const releasePad = () => { pad = { linear: 0, angular: 0 }; moveKnob(0, 0); };
+padEl.addEventListener("pointerup", releasePad);
+padEl.addEventListener("pointercancel", releasePad);
+
+const KEY_MAP = {
+  ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down",
+  ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
+};
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); stopAll(); return; }
+  const k = KEY_MAP[e.code];
+  if (k) { e.preventDefault(); keys.add(k); }
+});
+window.addEventListener("keyup", (e) => { const k = KEY_MAP[e.code]; if (k) keys.delete(k); });
+
+// Hidden tab or lost focus: stop now instead of waiting for the watchdog.
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopAll(); });
+window.addEventListener("blur", stopAll);
+
+connect();
+</script>
+</body>
+</html>

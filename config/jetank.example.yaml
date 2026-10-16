@@ -14,6 +14,11 @@ drive:
   max_speed: 0.5          # fraction of full motor power for a full-scale command
   watchdog_timeout_s: 0.5 # motors stop if no command arrives within this time
 
+teleop:                   # `jetank teleop`: remote-control page at http://<robot>.local:8080/
+  host: 0.0.0.0           # no authentication: anyone on the network can drive. Trusted LAN only.
+  port: 8080
+  tick_period_s: 0.05     # watchdog check period; must be < half of drive.watchdog_timeout_s
+
 camera:
   backend: hardware       # IMX219 on CAM0
   sensor_id: 0

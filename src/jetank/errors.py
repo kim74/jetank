@@ -38,3 +38,11 @@ class TerminationRequested(KeyboardInterrupt):
     def __init__(self, signal_name: str) -> None:
         super().__init__(f"received {signal_name}")
         self.signal_name = signal_name
+
+
+class ProtocolError(JetankError):
+    """A message from a remote client is malformed or not allowed."""
+
+
+class ServerError(JetankError):
+    """A network server could not be started, e.g. its port is already in use."""

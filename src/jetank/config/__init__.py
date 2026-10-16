@@ -9,6 +9,7 @@ from jetank.config.settings import (
     JetankSettings,
     MotorChannelConfig,
     MotorsConfig,
+    TeleopConfig,
     TrackerConfig,
     load_settings,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "JetankSettings",
     "MotorChannelConfig",
     "MotorsConfig",
+    "TeleopConfig",
     "TrackerConfig",
     "load_settings",
 ]
