@@ -31,50 +31,64 @@ _SECTION = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 class MotorChannelConfig(BaseModel):
     """Wiring and calibration of one track motor on the PCA9685 + TB6612 board.
 
+    The TB6612 takes a PWM input for speed and two digital inputs for direction; each is fed
+    by its own PCA9685 channel.
+
     Attributes:
-        pwm_in_a: PCA9685 channel driving the H-bridge IN1 input (receives PWM when forward).
-        pwm_in_b: PCA9685 channel driving the H-bridge IN2 input (receives PWM when reversing).
+        pwm_channel: PCA9685 channel driving the H-bridge PWM (speed) input.
+        forward_channel: PCA9685 channel driven high to run the track forward.
+        reverse_channel: PCA9685 channel driven high to run the track in reverse.
         trim: Gain applied to this motor to compensate for mismatched motors.
         inverted: Flip the direction, for a motor wired the other way round.
     """
 
     model_config = _SECTION
 
-    pwm_in_a: int = Field(ge=0, le=15)
-    pwm_in_b: int = Field(ge=0, le=15)
+    pwm_channel: int = Field(ge=0, le=15)
+    forward_channel: int = Field(ge=0, le=15)
+    reverse_channel: int = Field(ge=0, le=15)
     trim: float = Field(default=1.0, gt=0.0, le=1.5)
     inverted: bool = False
 
+    @property
+    def channels(self) -> frozenset[int]:
+        """All PCA9685 channels this motor uses."""
+        return frozenset((self.pwm_channel, self.forward_channel, self.reverse_channel))
+
     @model_validator(mode="after")
     def _distinct_channels(self) -> MotorChannelConfig:
-        if self.pwm_in_a == self.pwm_in_b:
-            raise ValueError("pwm_in_a and pwm_in_b must be different channels")
+        if len(self.channels) != 3:
+            raise ValueError("pwm, forward and reverse must be three different channels")
         return self
 
 
 class MotorsConfig(BaseModel):
     """Track motor driver (PCA9685 PWM expander feeding a TB6612 H-bridge).
 
-    Channel defaults follow the Waveshare JetBot board as handled in the legacy
-    ``jetbot/motor.py``. Not yet verified on the JETANK.
+    Channel defaults are the Adafruit MotorHAT layout, verified on the JETANK on 2026-10-16
+    by pulsing each track with the tracks lifted.
     """
 
     model_config = _SECTION
 
     backend: Backend = "fake"
-    # Orin Nano 40-pin header pins 3/5. Confirm with `i2cdetect -y -r <bus>` once wired.
+    # Orin Nano 40-pin header pins 3/5, verified with `i2cdetect -y -r 7`.
     i2c_bus: int = Field(default=7, ge=0)
     i2c_address: int = Field(default=0x60, ge=0x03, le=0x77)
     # 1526 Hz is the chip maximum (prescale 3); the legacy code asked for 1600 and got this.
     pwm_frequency_hz: int = Field(default=1526, ge=24, le=1526)
-    left: MotorChannelConfig = MotorChannelConfig(pwm_in_a=1, pwm_in_b=0)
-    right: MotorChannelConfig = MotorChannelConfig(pwm_in_a=2, pwm_in_b=3)
+    left: MotorChannelConfig = MotorChannelConfig(
+        pwm_channel=8, forward_channel=9, reverse_channel=10
+    )
+    right: MotorChannelConfig = MotorChannelConfig(
+        pwm_channel=13, forward_channel=12, reverse_channel=11
+    )
 
     @model_validator(mode="after")
     def _no_shared_channels(self) -> MotorsConfig:
-        used = [self.left.pwm_in_a, self.left.pwm_in_b, self.right.pwm_in_a, self.right.pwm_in_b]
-        if len(set(used)) != len(used):
-            raise ValueError(f"left and right motors share a PWM channel: {used}")
+        shared = self.left.channels & self.right.channels
+        if shared:
+            raise ValueError(f"left and right motors share PCA9685 channels: {sorted(shared)}")
         return self
 
 

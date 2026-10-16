@@ -80,16 +80,19 @@ def test_missing_file_raises_configuration_error(tmp_path: Path) -> None:
         load_settings(tmp_path / "absent.yaml")
 
 
-def test_motor_channel_needs_two_distinct_inputs() -> None:
-    with pytest.raises(ValidationError, match="different channels"):
-        MotorChannelConfig(pwm_in_a=3, pwm_in_b=3)
+@pytest.mark.parametrize(
+    ("pwm", "forward", "reverse"), [(3, 3, 4), (3, 4, 3), (4, 3, 3), (3, 3, 3)]
+)
+def test_motor_channel_needs_three_distinct_inputs(pwm: int, forward: int, reverse: int) -> None:
+    with pytest.raises(ValidationError, match="three different channels"):
+        MotorChannelConfig(pwm_channel=pwm, forward_channel=forward, reverse_channel=reverse)
 
 
 def test_motors_cannot_share_channels() -> None:
-    with pytest.raises(ValidationError, match="share a PWM channel"):
+    with pytest.raises(ValidationError, match=r"share PCA9685 channels: \[2\]"):
         MotorsConfig(
-            left=MotorChannelConfig(pwm_in_a=0, pwm_in_b=1),
-            right=MotorChannelConfig(pwm_in_a=1, pwm_in_b=2),
+            left=MotorChannelConfig(pwm_channel=0, forward_channel=1, reverse_channel=2),
+            right=MotorChannelConfig(pwm_channel=2, forward_channel=3, reverse_channel=4),
         )
 
 

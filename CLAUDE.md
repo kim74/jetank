@@ -37,10 +37,10 @@ An autonomous **garden guard**: the JETANK watches the garden, detects intruding
 
 | Subsystem        | Interface                          | Notes |
 |------------------|------------------------------------|-------|
-| Track motors     | I2C, PCA9685 PWM (max 1526 Hz) + TB6612 H-bridge | **Verified:** PCA9685 at `0x60` on `/dev/i2c-7` (header pins 3/5); `0x70` is its all-call address. Motor channel map/direction not yet verified. |
+| Track motors     | I2C, PCA9685 PWM (max 1526 Hz) + TB6612 H-bridge | **Verified:** PCA9685 at `0x60` on `/dev/i2c-7` (header pins 3/5); `0x70` is its all-call address. Adafruit MotorHAT channel layout (PWM + two direction pins), **not** the Waveshare JetBot ch 0–3: left PWM 8, fwd 9, rev 10; right PWM 13, fwd 12, rev 11. |
 | Arm / camera pan | Serial bus servos (SCServo/ST)     | UART on header pins 8/10 → `/dev/ttyTHS1` on Orin Nano JP6; user must be in `dialout`. |
 | OLED display     | I2C, SSD1306                       | Optional. Responds at `0x3C` on `/dev/i2c-7`. |
-| Battery monitor  | I2C, INA219                        | Optional. Responds at `0x41` on `/dev/i2c-7`. |
+| Battery monitor  | I2C, INA219                        | Optional. Responds at `0x41` on `/dev/i2c-7`; reads battery voltage (~11.9 V, 3S) but is **not** in the motor current path. |
 | Camera           | CSI, IMX219, GStreamer `nvarguscamerasrc` | **Verified** on CAM0 (`/dev/video0`), 1640x1232@30 → 640x480. Wide-angle module shows a pink cast with default ISP tuning. Never block the control loop on frame capture. |
 
 Bus numbers, addresses and device paths are **configuration, never constants in code** (see

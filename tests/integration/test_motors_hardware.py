@@ -28,7 +28,7 @@ from jetank.control.drive import DriveController
 from jetank.domain.models import DriveCommand, TrackSpeeds
 from jetank.drivers.pca9685 import LED0_ON_L, duty_to_block
 from jetank.drivers.system_clock import SystemClock
-from jetank.drivers.tb6612_tracks import Tb6612TrackDriver, channel_duties
+from jetank.drivers.tb6612_tracks import Tb6612TrackDriver, bridge_outputs
 from jetank.errors import DriverClosedError
 
 pytestmark = [
@@ -87,12 +87,7 @@ def driver(config: MotorsConfig, interactive: bool) -> Iterator[Tb6612TrackDrive
 
 
 def _motor_channels(config: MotorsConfig) -> list[int]:
-    return [
-        config.left.pwm_in_a,
-        config.left.pwm_in_b,
-        config.right.pwm_in_a,
-        config.right.pwm_in_b,
-    ]
+    return sorted(config.left.channels | config.right.channels)
 
 
 def _read_blocks(config: MotorsConfig) -> dict[int, list[int]]:
@@ -107,9 +102,10 @@ def _read_blocks(config: MotorsConfig) -> dict[int, list[int]]:
 def _expected_blocks(config: MotorsConfig, speeds: TrackSpeeds) -> dict[int, list[int]]:
     expected: dict[int, list[int]] = {}
     for channel, speed in ((config.left, speeds.left), (config.right, speeds.right)):
-        duty_a, duty_b = channel_duties(speed, channel)
-        expected[channel.pwm_in_a] = duty_to_block(duty_a)
-        expected[channel.pwm_in_b] = duty_to_block(duty_b)
+        outputs = bridge_outputs(speed, channel)
+        expected[channel.pwm_channel] = duty_to_block(outputs.pwm_duty)
+        expected[channel.forward_channel] = duty_to_block(1.0 if outputs.forward else 0.0)
+        expected[channel.reverse_channel] = duty_to_block(1.0 if outputs.reverse else 0.0)
     return expected
 
 

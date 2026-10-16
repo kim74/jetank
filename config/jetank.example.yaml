@@ -6,8 +6,9 @@ motors:
   i2c_bus: 7             # Orin Nano header pins 3/5; verify with `i2cdetect -y -r 7`
   i2c_address: 0x60
   pwm_frequency_hz: 1526  # PCA9685 maximum
-  left:  {pwm_in_a: 1, pwm_in_b: 0, trim: 1.0, inverted: false}
-  right: {pwm_in_a: 2, pwm_in_b: 3, trim: 1.0, inverted: false}
+  # PCA9685 channels per track (Adafruit MotorHAT layout, verified on the JETANK)
+  left:  {pwm_channel: 8,  forward_channel: 9,  reverse_channel: 10, trim: 1.0, inverted: false}
+  right: {pwm_channel: 13, forward_channel: 12, reverse_channel: 11, trim: 1.0, inverted: false}
 
 drive:
   max_speed: 0.5          # fraction of full motor power for a full-scale command

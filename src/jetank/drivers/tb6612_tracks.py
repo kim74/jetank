@@ -3,15 +3,17 @@ Track motor driver: two TB6612 H-bridge channels whose inputs are fed by a PCA96
 
 Layer: drivers
 
-Each motor uses two PWM channels. Forward puts the PWM on IN_A with IN_B low; reverse
-does the opposite; both low lets the motor coast. This matches the Waveshare JetBot board
-logic in the legacy ``jetbot/motor.py``.
+Each motor uses three PCA9685 channels in the Adafruit MotorHAT layout: one carries the PWM
+(speed) and two are driven fully high or low to select the direction. Zero speed drives all
+three low so the motor coasts. The two direction inputs are never driven high together.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jetank.drivers.pca9685 import Pca9685
 from jetank.errors import DriverClosedError, HardwareError
@@ -26,16 +28,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def channel_duties(speed: float, channel: MotorChannelConfig) -> tuple[float, float]:
-    """Duty cycles ``(in_a, in_b)`` for one motor after applying trim and inversion.
+class BridgeOutputs(BaseModel):
+    """Levels for one motor's H-bridge inputs.
+
+    Attributes:
+        pwm_duty: Duty cycle of the PWM (speed) input, in [0, 1].
+        forward: Whether the forward direction input is high.
+        reverse: Whether the reverse direction input is high.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pwm_duty: float = Field(ge=0.0, le=1.0)
+    forward: bool
+    reverse: bool
+
+    @model_validator(mode="after")
+    def _one_direction(self) -> BridgeOutputs:
+        if self.forward and self.reverse:
+            raise ValueError("forward and reverse inputs must not both be high")
+        if self.pwm_duty > 0.0 and not (self.forward or self.reverse):
+            raise ValueError("a non-zero duty needs a direction")
+        return self
+
+
+def bridge_outputs(speed: float, channel: MotorChannelConfig) -> BridgeOutputs:
+    """H-bridge input levels for one motor after applying trim and inversion.
 
     Args:
-        speed: Normalised speed in [-1, 1].
+        speed: Normalised speed in [-1, 1]; positive drives the track forward.
         channel: Wiring and calibration of the motor.
     """
     value = speed * channel.trim * (-1.0 if channel.inverted else 1.0)
     value = max(-1.0, min(1.0, value))
-    return (value, 0.0) if value >= 0.0 else (0.0, -value)
+    return BridgeOutputs(pwm_duty=abs(value), forward=value > 0.0, reverse=value < 0.0)
 
 
 class Tb6612TrackDriver:
@@ -104,18 +130,24 @@ class Tb6612TrackDriver:
 
     def _stop_outputs(self) -> None:
         for channel in (self._config.left, self._config.right):
-            self._pwm.set_duty(channel.pwm_in_a, 0.0)
-            self._pwm.set_duty(channel.pwm_in_b, 0.0)
+            self._pwm.set_duty(channel.pwm_channel, 0.0)
+            self._pwm.set_duty(channel.forward_channel, 0.0)
+            self._pwm.set_duty(channel.reverse_channel, 0.0)
 
     def _apply(self, channel: MotorChannelConfig, speed: float) -> None:
-        duty_a, duty_b = channel_duties(speed, channel)
-        # Lower the inactive input first so the bridge never sees both inputs driven.
-        if duty_a > 0.0:
-            self._pwm.set_duty(channel.pwm_in_b, duty_b)
-            self._pwm.set_duty(channel.pwm_in_a, duty_a)
+        outputs = bridge_outputs(speed, channel)
+        if outputs.pwm_duty == 0.0:
+            self._pwm.set_duty(channel.pwm_channel, 0.0)
+        # Lower the inactive direction input before raising the active one, so the two are
+        # never high together; the speed is applied once the direction is set.
+        if outputs.forward:
+            self._pwm.set_duty(channel.reverse_channel, 0.0)
+            self._pwm.set_duty(channel.forward_channel, 1.0)
         else:
-            self._pwm.set_duty(channel.pwm_in_a, duty_a)
-            self._pwm.set_duty(channel.pwm_in_b, duty_b)
+            self._pwm.set_duty(channel.forward_channel, 0.0)
+            self._pwm.set_duty(channel.reverse_channel, 1.0 if outputs.reverse else 0.0)
+        if outputs.pwm_duty > 0.0:
+            self._pwm.set_duty(channel.pwm_channel, outputs.pwm_duty)
 
     def _ensure_open(self) -> None:
         if self._closed:
