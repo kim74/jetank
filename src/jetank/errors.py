@@ -25,3 +25,16 @@ class CameraError(HardwareError):
 
 class DriverClosedError(JetankError):
     """An operation was attempted on a driver that has already been closed."""
+
+
+class TerminationRequested(KeyboardInterrupt):
+    """The process received SIGHUP or SIGTERM (e.g. an SSH session dropped).
+
+    Derives from ``KeyboardInterrupt`` rather than :class:`JetankError` on purpose: like Ctrl-C,
+    it must not be swallowed by ``except Exception`` handlers, and it unwinds every ``with``
+    block on its way out so drivers leave the robot in a safe state.
+    """
+
+    def __init__(self, signal_name: str) -> None:
+        super().__init__(f"received {signal_name}")
+        self.signal_name = signal_name
