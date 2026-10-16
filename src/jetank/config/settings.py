@@ -12,8 +12,11 @@ Values are resolved in this order (highest priority first):
 
 from __future__ import annotations
 
+import difflib
+import logging
+import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -22,6 +25,18 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from jetank.domain.coco import COCO_CLASSES
 from jetank.domain.detection import Response
 from jetank.errors import ConfigurationError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+logger = logging.getLogger(__name__)
+
+ENV_PREFIX: Final = "JETANK_"
+ENV_NESTED_DELIMITER: Final = "__"
+#: ``JETANK_*`` variables that are not settings (read directly by the hardware tests).
+NON_SETTING_ENV_VARS: Final = frozenset(
+    {"JETANK_ALLOW_MOTION", "JETANK_ALLOW_GROUND_DRIVE", "JETANK_CIRCLE_S"}
+)
 
 Backend = Literal["hardware", "fake"]
 
@@ -227,8 +242,8 @@ class JetankSettings(BaseSettings):
     """Top-level configuration for the robot."""
 
     model_config = SettingsConfigDict(
-        env_prefix="JETANK_",
-        env_nested_delimiter="__",
+        env_prefix=ENV_PREFIX,
+        env_nested_delimiter=ENV_NESTED_DELIMITER,
         extra="forbid",
         frozen=True,
         validate_default=True,
@@ -273,12 +288,46 @@ def load_settings(path: Path | None = None) -> JetankSettings:
     Raises:
         ConfigurationError: The file is missing, is not a YAML mapping, or fails validation.
     """
+    for name in unknown_environment_variables(os.environ):
+        hint = difflib.get_close_matches(name.upper(), _setting_env_names(), n=1)
+        logger.warning(
+            "ignoring unknown environment variable %s%s",
+            name,
+            f" (did you mean {hint[0]}?)" if hint else "",
+        )
     data = _read_yaml(path) if path is not None else {}
     try:
         return JetankSettings(**data)
     except ValidationError as exc:
         source = str(path) if path is not None else "defaults/environment"
         raise ConfigurationError(f"invalid configuration ({source}):\n{exc}") from exc
+
+
+def unknown_environment_variables(environ: Mapping[str, str]) -> list[str]:
+    """``JETANK_*`` variables in ``environ`` that do not name any setting.
+
+    pydantic-settings silently ignores those, so a typo such as ``JETANK_MOTORS_BACKEND``
+    (one underscore) would otherwise leave the default in place without any notice.
+    """
+    known = _setting_env_names() | NON_SETTING_ENV_VARS
+    return sorted(
+        name
+        for name in environ
+        if name.upper().startswith(ENV_PREFIX) and name.upper() not in known
+    )
+
+
+def _setting_env_names() -> frozenset[str]:
+    return frozenset(_env_names(JetankSettings, ENV_PREFIX))
+
+
+def _env_names(model: type[BaseModel], prefix: str) -> Iterator[str]:
+    for field_name, field in model.model_fields.items():
+        name = f"{prefix}{field_name}".upper()
+        yield name
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            yield from _env_names(annotation, name + ENV_NESTED_DELIMITER)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

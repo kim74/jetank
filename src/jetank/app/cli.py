@@ -81,6 +81,13 @@ def _cmd_snapshot(settings: JetankSettings, output: Path, warmup: int) -> int:
 
 def _cmd_teleop(settings: JetankSettings) -> int:
     clock = SystemClock()
+    if settings.motors.backend == "fake":
+        logger.warning(
+            "teleop is using FAKE motors: the robot will not move "
+            "(set motors.backend: hardware, or JETANK_MOTORS__BACKEND=hardware)"
+        )
+    else:
+        logger.info("teleop is using the %s motor backend", settings.motors.backend)
 
     def announce(port: int) -> None:
         print(f"remote control at http://{socket.gethostname()}.local:{port}/ (Ctrl-C stops)")

@@ -13,6 +13,7 @@ from jetank.config.settings import (
     MotorsConfig,
     TeleopConfig,
     load_settings,
+    unknown_environment_variables,
 )
 from jetank.errors import ConfigurationError
 
@@ -113,3 +114,34 @@ def test_teleop_tick_must_be_well_below_watchdog_timeout() -> None:
 def test_teleop_defaults_listen_on_the_network() -> None:
     teleop = JetankSettings().teleop
     assert (teleop.host, teleop.port) == ("0.0.0.0", 8080)
+
+
+def test_misspelt_environment_variable_is_reported(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Single underscore instead of the "__" nesting delimiter: silently ignored before.
+    monkeypatch.setenv("JETANK_MOTORS_BACKEND", "hardware")
+    with caplog.at_level("WARNING", logger="jetank.config.settings"):
+        settings = load_settings()
+    assert settings.motors.backend == "fake"
+    assert "JETANK_MOTORS_BACKEND" in caplog.text
+    assert "did you mean JETANK_MOTORS__BACKEND" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "JETANK_MOTORS__BACKEND",
+        "jetank_motors__backend",
+        "JETANK_MOTORS__LEFT__TRIM",
+        "JETANK_DRIVE",
+        "JETANK_ALLOW_MOTION",
+        "PATH",
+    ],
+)
+def test_known_environment_variables_are_not_reported(name: str) -> None:
+    assert unknown_environment_variables({name: "x"}) == []
+
+
+def test_unknown_variable_without_close_match_is_reported_without_hint() -> None:
+    assert unknown_environment_variables({"JETANK_ZZZ": "1"}) == ["JETANK_ZZZ"]

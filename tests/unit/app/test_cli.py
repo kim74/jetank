@@ -65,3 +65,18 @@ def test_teleop_stops_and_closes_motors_on_ctrl_c(monkeypatch: pytest.MonkeyPatc
     assert served == [True]
     assert motors.closed
     assert motors.current.is_stopped
+
+
+def test_teleop_warns_when_motors_are_fake(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jetank.app import cli
+
+    async def interrupted_serve(self: object, on_ready: object = None) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    with caplog.at_level("INFO"):
+        assert main(["teleop"]) == 0
+    assert "FAKE motors" in caplog.text
+    assert "will not move" in caplog.text
