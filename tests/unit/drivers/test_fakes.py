@@ -3,9 +3,26 @@ from __future__ import annotations
 import pytest
 
 from jetank.domain.models import TrackSpeeds
-from jetank.drivers.fake import FakeCamera, FakeClock, FakeI2CBus, FakeMotorDriver
-from jetank.errors import DriverClosedError
-from jetank.interfaces import Camera, Clock, I2CBus, MotorDriver
+from jetank.domain.status import StatusScreen
+from jetank.drivers.fake import (
+    FakeCamera,
+    FakeClock,
+    FakeDisplay,
+    FakeHostInfo,
+    FakeI2CBus,
+    FakeMotorDriver,
+    FakePowerMonitor,
+)
+from jetank.errors import DriverClosedError, HardwareError
+from jetank.interfaces import (
+    Camera,
+    Clock,
+    Display,
+    HostInfo,
+    I2CBus,
+    MotorDriver,
+    PowerMonitor,
+)
 
 
 def test_fakes_satisfy_their_interfaces(clock: FakeClock) -> None:
@@ -13,6 +30,9 @@ def test_fakes_satisfy_their_interfaces(clock: FakeClock) -> None:
     assert isinstance(FakeMotorDriver(), MotorDriver)
     assert isinstance(FakeCamera(4, 3, clock), Camera)
     assert isinstance(FakeI2CBus(), I2CBus)
+    assert isinstance(FakeDisplay(), Display)
+    assert isinstance(FakePowerMonitor(), PowerMonitor)
+    assert isinstance(FakeHostInfo(), HostInfo)
 
 
 class TestFakeClock:
@@ -81,3 +101,50 @@ class TestFakeI2CBus:
         i2c_bus.close()
         with pytest.raises(DriverClosedError):
             i2c_bus.write_byte_data(0x40, 0, 0)
+
+    def test_block_read_returns_consecutive_registers(self, i2c_bus: FakeI2CBus) -> None:
+        i2c_bus.write_i2c_block_data(0x41, 0x02, [0x5D, 0x3A])
+        assert i2c_bus.read_i2c_block_data(0x41, 0x02, 2) == [0x5D, 0x3A]
+
+    def test_block_writes_are_logged_and_limited_to_32_bytes(self, i2c_bus: FakeI2CBus) -> None:
+        i2c_bus.write_i2c_block_data(0x3C, 0x40, [1, 2])
+        assert i2c_bus.block_writes == [(0x3C, 0x40, [1, 2])]
+        with pytest.raises(ValueError, match="at most 32"):
+            i2c_bus.write_i2c_block_data(0x3C, 0x40, [0] * 33)
+
+
+class TestFakeDisplay:
+    def test_records_screens_and_close_blanks(self) -> None:
+        display = FakeDisplay()
+        display.show(StatusScreen(lines=("hi",)))
+        display.clear()
+        display.close()
+        display.close()
+        assert [s.lines for s in display.history] == [("hi",), (), ()]
+
+    def test_use_after_close_raises(self) -> None:
+        display = FakeDisplay()
+        display.close()
+        with pytest.raises(DriverClosedError):
+            display.show(StatusScreen(lines=()))
+
+    def test_simulated_failure_raises(self) -> None:
+        display = FakeDisplay()
+        display.fail_with = HardwareError("gone")
+        with pytest.raises(HardwareError):
+            display.clear()
+
+
+class TestFakePowerMonitor:
+    def test_reports_set_voltage(self) -> None:
+        power = FakePowerMonitor(voltage_v=11.1)
+        assert power.read_battery().voltage_v == 11.1
+
+    def test_failure_and_close(self) -> None:
+        power = FakePowerMonitor()
+        power.fail_with = HardwareError("gone")
+        with pytest.raises(HardwareError):
+            power.read_battery()
+        power.close()
+        with pytest.raises(DriverClosedError):
+            power.read_battery()

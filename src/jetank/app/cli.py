@@ -17,19 +17,34 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jetank.app.signals import raise_on_termination_signals
+from jetank.app.status_display import (
+    close_display_quietly,
+    run_status_display,
+    show_status_until_interrupted,
+)
 from jetank.app.teleop_server import TeleopServer, load_page
-from jetank.app.wiring import build_camera, build_motor_driver
+from jetank.app.wiring import (
+    build_camera,
+    build_display,
+    build_motor_driver,
+    build_power_monitor,
+)
 from jetank.config.settings import load_settings
 from jetank.control.drive import DriveController
+from jetank.control.status import StatusReporter
 from jetank.control.teleop import TeleopSession
+from jetank.domain.status import RobotMode
 from jetank.drivers.system_clock import SystemClock
-from jetank.errors import JetankError
+from jetank.drivers.system_host import SystemHostInfo
+from jetank.errors import HardwareError, JetankError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from jetank.config.settings import JetankSettings
     from jetank.domain.models import Frame
+    from jetank.interfaces.display import Display
+    from jetank.interfaces.power import PowerMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +70,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser(
         "teleop", help="serve a remote-control web page (no authentication: trusted LAN only)"
+    )
+    commands.add_parser(
+        "display", help="show hostname, IP address and battery on the OLED until Ctrl-C"
     )
     return parser
 
@@ -92,17 +110,78 @@ def _cmd_teleop(settings: JetankSettings) -> int:
     def announce(port: int) -> None:
         print(f"remote control at http://{socket.gethostname()}.local:{port}/ (Ctrl-C stops)")
 
-    with (
-        contextlib.closing(build_motor_driver(settings.motors)) as motors,
-        DriveController(motors, clock, settings.drive) as drive,
-        raise_on_termination_signals(),
-    ):
-        server = TeleopServer(TeleopSession(drive), settings.teleop, load_page())
+    # Entered in this order so that on exit the motors stop before the display is blanked.
+    with contextlib.ExitStack() as stack:
+        power = stack.enter_context(contextlib.closing(build_power_monitor(settings.power)))
+        display = _open_optional_display(settings)
+        if display is not None:
+            stack.callback(close_display_quietly, display)
+        motors = stack.enter_context(contextlib.closing(build_motor_driver(settings.motors)))
+        drive = stack.enter_context(DriveController(motors, clock, settings.drive))
+        stack.enter_context(raise_on_termination_signals())
+        session = TeleopSession(drive)
+        server = TeleopServer(session, settings.teleop, load_page())
+        reporter = None if display is None else _status_reporter(settings, display, power)
         try:
-            asyncio.run(server.serve(on_ready=announce))
+            asyncio.run(_serve_teleop(server, announce, reporter, session, settings))
         except KeyboardInterrupt as exc:
             logger.info("teleop stopped: %s", exc or "Ctrl-C")
     return 0
+
+
+async def _serve_teleop(
+    server: TeleopServer,
+    announce: Callable[[int], None],
+    reporter: StatusReporter | None,
+    session: TeleopSession,
+    settings: JetankSettings,
+) -> None:
+    if reporter is None:
+        await server.serve(on_ready=announce)
+        return
+    status = asyncio.create_task(
+        run_status_display(reporter, lambda: session.mode, settings.display.refresh_period_s)
+    )
+    try:
+        await server.serve(on_ready=announce)
+    finally:
+        status.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await status
+
+
+def _cmd_display(settings: JetankSettings) -> int:
+    if settings.display.backend == "fake":
+        logger.warning(
+            "the display backend is FAKE: nothing will appear on the OLED "
+            "(set display.backend: hardware, or JETANK_DISPLAY__BACKEND=hardware)"
+        )
+    with (
+        contextlib.closing(build_power_monitor(settings.power)) as power,
+        contextlib.closing(build_display(settings.display)) as display,
+        raise_on_termination_signals(),
+    ):
+        print("showing status on the display (Ctrl-C stops and blanks it)")
+        show_status_until_interrupted(
+            _status_reporter(settings, display, power),
+            RobotMode.IDLE,
+            settings.display.refresh_period_s,
+        )
+    return 0
+
+
+def _open_optional_display(settings: JetankSettings) -> Display | None:
+    try:
+        return build_display(settings.display)
+    except HardwareError as exc:
+        logger.warning("status display unavailable, continuing without it: %s", exc)
+        return None
+
+
+def _status_reporter(
+    settings: JetankSettings, display: Display, power: PowerMonitor
+) -> StatusReporter:
+    return StatusReporter(display, power, SystemHostInfo(), settings.power.low_voltage_v)
 
 
 def _write_image(path: Path, frame: Frame) -> None:
@@ -129,6 +208,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_config(settings)
         if args.command == "teleop":
             return _cmd_teleop(settings)
+        if args.command == "display":
+            return _cmd_display(settings)
         return _cmd_snapshot(settings, args.output, args.warmup)
     except JetankError as exc:
         print(f"error: {exc}", file=sys.stderr)

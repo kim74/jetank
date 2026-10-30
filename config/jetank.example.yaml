@@ -19,6 +19,19 @@ teleop:                   # `jetank teleop`: remote-control page at http://<robo
   port: 8080
   tick_period_s: 0.05     # watchdog check period; must be < half of drive.watchdog_timeout_s
 
+display:                  # SSD1306 OLED: hostname, IP, battery, mode (`jetank display`, teleop)
+  backend: hardware
+  i2c_bus: 7
+  i2c_address: 0x3C
+  height: 32              # 128x32 panel; 64 for a 128x64 one
+  refresh_period_s: 2.0
+
+power:                    # INA219 battery monitor (bus voltage only)
+  backend: hardware
+  i2c_bus: 7
+  i2c_address: 0x41
+  low_voltage_v: 10.5     # flagged LOW on the display at or below this (3.5 V per cell, 3S)
+
 camera:
   backend: hardware       # IMX219 on CAM0
   sensor_id: 0

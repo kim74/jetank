@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from jetank.config.settings import (
     CameraConfig,
+    DisplayConfig,
     DriveConfig,
     JetankSettings,
     MotorChannelConfig,
@@ -31,6 +32,8 @@ def test_defaults_are_safe() -> None:
     settings = load_settings()
     assert settings.motors.backend == "fake"
     assert settings.camera.backend == "fake"
+    assert settings.display.backend == "fake"
+    assert settings.power.backend == "fake"
     assert settings.drive.max_speed <= 0.5
 
 
@@ -40,6 +43,8 @@ def test_example_config_in_repo_is_valid() -> None:
     example = Path(__file__).parents[3] / "config" / "jetank.example.yaml"
     settings = load_settings(example)
     assert settings.motors.i2c_address == 0x60
+    assert settings.display.i2c_address == 0x3C
+    assert settings.power.i2c_address == 0x41
 
 
 def test_yaml_values_override_defaults(tmp_path: Path) -> None:
@@ -145,3 +150,14 @@ def test_known_environment_variables_are_not_reported(name: str) -> None:
 
 def test_unknown_variable_without_close_match_is_reported_without_hint() -> None:
     assert unknown_environment_variables({"JETANK_ZZZ": "1"}) == ["JETANK_ZZZ"]
+
+
+@pytest.mark.parametrize("height", [16, 48])
+def test_display_height_must_be_a_supported_panel(height: int) -> None:
+    with pytest.raises(ValidationError):
+        DisplayConfig(height=height)  # type: ignore[arg-type]
+
+
+def test_display_backend_can_be_set_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JETANK_DISPLAY__BACKEND", "hardware")
+    assert load_settings().display.backend == "hardware"

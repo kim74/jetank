@@ -80,3 +80,91 @@ def test_teleop_warns_when_motors_are_fake(
         assert main(["teleop"]) == 0
     assert "FAKE motors" in caplog.text
     assert "will not move" in caplog.text
+
+
+def test_display_shows_status_until_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jetank.app import cli, status_display
+    from jetank.drivers.fake import FakeDisplay
+
+    display = FakeDisplay()
+
+    def interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_display", lambda _config: display)
+    monkeypatch.setattr(status_display.time, "sleep", interrupt)
+    assert main(["display"]) == 0
+    assert display.history[0].lines[-1] == "idle"
+    assert display.closed
+    assert display.current.lines == ()
+
+
+def test_display_hardware_failure_exits_with_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jetank.app import cli
+    from jetank.errors import HardwareError
+
+    def missing(_config: object) -> object:
+        raise HardwareError("SSD1306 at 0x3C not responding")
+
+    monkeypatch.setattr(cli, "build_display", missing)
+    assert main(["display"]) == 1
+    assert "0x3C not responding" in capsys.readouterr().err
+
+
+def test_teleop_shows_mode_and_stops_motors_before_blanking_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeDisplay, FakeMotorDriver
+
+    events: list[str] = []
+    motors = FakeMotorDriver()
+
+    class RecordingDisplay(FakeDisplay):
+        def close(self) -> None:
+            events.append(f"display closed, motors closed={motors.closed}")
+            super().close()
+
+    display = RecordingDisplay()
+
+    async def serve_until_status_shown(self: object, on_ready: object = None) -> None:
+        while not display.history:
+            await asyncio.sleep(0.001)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(cli, "build_display", lambda _config: display)
+    monkeypatch.setattr(cli.TeleopServer, "serve", serve_until_status_shown)
+    assert main(["teleop"]) == 0
+    assert display.history[0].lines[-1] == "teleop: waiting"
+    assert events == ["display closed, motors closed=True"]
+
+
+def test_teleop_runs_without_a_working_display(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeMotorDriver
+    from jetank.errors import HardwareError
+
+    motors = FakeMotorDriver()
+    served: list[bool] = []
+
+    def missing(_config: object) -> object:
+        raise HardwareError("SSD1306 at 0x3C not responding")
+
+    async def interrupted_serve(self: object, on_ready: object = None) -> None:
+        served.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(cli, "build_display", missing)
+    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    assert main(["teleop"]) == 0
+    assert served == [True]
+    assert motors.closed
+    assert "continuing without it" in caplog.text

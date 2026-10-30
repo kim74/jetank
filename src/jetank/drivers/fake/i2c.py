@@ -10,21 +10,28 @@ from collections import defaultdict
 
 from jetank.errors import DriverClosedError
 
+#: Largest block smbus2 accepts in one transfer (``I2C_SMBUS_BLOCK_MAX``).
+SMBUS_BLOCK_MAX = 32
+
 
 class FakeI2CBus:
     """:class:`~jetank.interfaces.I2CBus` storing registers per device address.
 
-    Block writes fill consecutive registers, matching chips with register auto-increment.
+    Block reads and writes cover consecutive registers, matching chips with register
+    auto-increment. A chip with 16-bit registers is modelled as high byte at ``register``
+    and low byte at ``register + 1``.
 
     Attributes:
         registers: ``registers[address][register]`` holds the last value written.
         writes: Log of ``(address, register, value)`` for every byte written, in order.
+        block_writes: Log of ``(address, register, data)`` for every block write, in order.
         fail_with: If set, every access raises this exception (to simulate a missing device).
     """
 
     def __init__(self) -> None:
         self.registers: defaultdict[int, dict[int, int]] = defaultdict(dict)
         self.writes: list[tuple[int, int, int]] = []
+        self.block_writes: list[tuple[int, int, list[int]]] = []
         self.fail_with: OSError | None = None
         self.closed = False
 
@@ -38,6 +45,9 @@ class FakeI2CBus:
         self._check()
         return self.registers[i2c_addr].get(register, 0)
 
+    def read_i2c_block_data(self, i2c_addr: int, register: int, length: int) -> list[int]:
+        return [self.read_byte_data(i2c_addr, register + offset) for offset in range(length)]
+
     def write_byte_data(self, i2c_addr: int, register: int, value: int) -> None:
         self._check()
         if not 0 <= value <= 0xFF:
@@ -46,6 +56,10 @@ class FakeI2CBus:
         self.writes.append((i2c_addr, register, value))
 
     def write_i2c_block_data(self, i2c_addr: int, register: int, data: list[int]) -> None:
+        self._check()
+        if len(data) > SMBUS_BLOCK_MAX:
+            raise ValueError(f"SMBus block writes carry at most {SMBUS_BLOCK_MAX} bytes")
+        self.block_writes.append((i2c_addr, register, list(data)))
         for offset, value in enumerate(data):
             self.write_byte_data(i2c_addr, register + offset, value)
 

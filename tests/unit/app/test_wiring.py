@@ -3,10 +3,16 @@ from __future__ import annotations
 import pytest
 
 from jetank.app import wiring
-from jetank.app.wiring import build_robot
-from jetank.config.settings import JetankSettings
+from jetank.app.wiring import build_display, build_power_monitor, build_robot
+from jetank.config.settings import DisplayConfig, JetankSettings, PowerConfig
 from jetank.domain.models import DriveCommand
-from jetank.drivers.fake import FakeCamera, FakeClock, FakeMotorDriver
+from jetank.drivers.fake import (
+    FakeCamera,
+    FakeClock,
+    FakeDisplay,
+    FakeMotorDriver,
+    FakePowerMonitor,
+)
 from jetank.errors import CameraError
 
 
@@ -47,3 +53,13 @@ def test_robot_uses_system_clock_by_default() -> None:
         assert robot.camera.read().timestamp_s > 0
     finally:
         robot.close()
+
+
+def test_fake_display_matches_panel_height() -> None:
+    display = build_display(DisplayConfig(height=64))
+    assert isinstance(display, FakeDisplay)
+    assert (display.columns, display.rows) == (21, 8)
+
+
+def test_fake_power_monitor_is_built_by_default() -> None:
+    assert isinstance(build_power_monitor(PowerConfig()), FakePowerMonitor)

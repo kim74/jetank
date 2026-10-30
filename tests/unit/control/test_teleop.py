@@ -7,6 +7,7 @@ import pytest
 from jetank.control.drive import DriveController
 from jetank.control.teleop import TeleopSession
 from jetank.domain.models import TrackSpeeds
+from jetank.domain.status import RobotMode
 from jetank.domain.teleop import DriveMessage, Role, StopMessage
 from jetank.drivers.fake import FakeClock, FakeMotorDriver
 from jetank.errors import HardwareError, ProtocolError
@@ -27,6 +28,14 @@ def test_first_client_drives_and_later_ones_observe(session: TeleopSession) -> N
     assert session.connect("a").role is Role.DRIVER
     assert session.connect("b").role is Role.OBSERVER
     assert session.driver == "a"
+
+
+def test_mode_reports_whether_someone_is_driving(session: TeleopSession) -> None:
+    assert session.mode is RobotMode.TELEOP_WAITING
+    session.connect("a")
+    assert session.mode is RobotMode.TELEOP_DRIVING
+    session.disconnect("a")
+    assert session.mode is RobotMode.TELEOP_WAITING
 
 
 def test_driver_command_reaches_motors_with_speed_limit(

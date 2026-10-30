@@ -12,16 +12,26 @@ from typing import TYPE_CHECKING
 
 from jetank.control.drive import DriveController
 from jetank.drivers.fake.camera import FakeCamera
+from jetank.drivers.fake.display import FakeDisplay
 from jetank.drivers.fake.motors import FakeMotorDriver
+from jetank.drivers.fake.power import FakePowerMonitor
 from jetank.drivers.system_clock import SystemClock
 
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from jetank.config.settings import CameraConfig, JetankSettings, MotorsConfig
+    from jetank.config.settings import (
+        CameraConfig,
+        DisplayConfig,
+        JetankSettings,
+        MotorsConfig,
+        PowerConfig,
+    )
     from jetank.interfaces.camera import Camera
     from jetank.interfaces.clock import Clock
+    from jetank.interfaces.display import Display
     from jetank.interfaces.motors import MotorDriver
+    from jetank.interfaces.power import PowerMonitor
 
 
 def build_motor_driver(config: MotorsConfig) -> MotorDriver:
@@ -40,6 +50,24 @@ def build_camera(config: CameraConfig, clock: Clock) -> Camera:
     from jetank.drivers.gst_camera import GstCamera
 
     return GstCamera(config, clock)
+
+
+def build_display(config: DisplayConfig) -> Display:
+    """Create the status display selected by ``config.backend``."""
+    if config.backend == "fake":
+        return FakeDisplay(rows=config.height // 8)
+    from jetank.drivers.ssd1306 import Ssd1306Display
+
+    return Ssd1306Display.open(config)
+
+
+def build_power_monitor(config: PowerConfig) -> PowerMonitor:
+    """Create the battery monitor selected by ``config.backend``."""
+    if config.backend == "fake":
+        return FakePowerMonitor()
+    from jetank.drivers.ina219 import Ina219PowerMonitor
+
+    return Ina219PowerMonitor.open(config)
 
 
 @dataclass

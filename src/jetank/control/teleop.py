@@ -20,6 +20,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from jetank.domain.models import TrackSpeeds
+from jetank.domain.status import RobotMode
 from jetank.domain.teleop import DriveMessage, Role, StopMessage, TeleopStatus
 from jetank.errors import ProtocolError
 
@@ -46,6 +47,11 @@ class TeleopSession:
     def driver(self) -> str | None:
         """ID of the client currently allowed to drive, if any."""
         return self._driver
+
+    @property
+    def mode(self) -> RobotMode:
+        """Whether a client is in the driver seat, for the status display."""
+        return RobotMode.TELEOP_WAITING if self._driver is None else RobotMode.TELEOP_DRIVING
 
     def connect(self, client_id: str) -> TeleopStatus:
         """Register a client. It becomes the driver if nobody else is driving.

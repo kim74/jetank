@@ -141,6 +141,42 @@ class TeleopConfig(BaseModel):
     tick_period_s: float = Field(default=0.05, gt=0.0, le=1.0)
 
 
+class DisplayConfig(BaseModel):
+    """SSD1306 OLED showing hostname, IP address, battery and mode.
+
+    Attributes:
+        i2c_bus / i2c_address: Where the display answers (``0x3C`` on ``/dev/i2c-7``).
+        height: Panel height in pixels; the JETANK's panel is 128x32.
+        refresh_period_s: How often the status is re-read; the panel is only rewritten
+            when the text changes.
+    """
+
+    model_config = _SECTION
+
+    backend: Backend = "fake"
+    i2c_bus: int = Field(default=7, ge=0)
+    i2c_address: int = Field(default=0x3C, ge=0x03, le=0x77)
+    height: Literal[32, 64] = 32
+    refresh_period_s: float = Field(default=2.0, ge=0.2, le=60.0)
+
+
+class PowerConfig(BaseModel):
+    """INA219 battery monitor (bus voltage only; it is not in the motor current path).
+
+    Attributes:
+        i2c_bus / i2c_address: Where the monitor answers (``0x41`` on ``/dev/i2c-7``).
+        low_voltage_v: At or below this the display flags the battery as low. 10.5 V is
+            3.5 V per cell for the JETANK's 3S pack.
+    """
+
+    model_config = _SECTION
+
+    backend: Backend = "fake"
+    i2c_bus: int = Field(default=7, ge=0)
+    i2c_address: int = Field(default=0x41, ge=0x03, le=0x77)
+    low_voltage_v: float = Field(default=10.5, gt=0.0, le=32.0)
+
+
 class CameraConfig(BaseModel):
     """CSI camera (IMX219) captured through GStreamer ``nvarguscamerasrc``.
 
@@ -252,6 +288,8 @@ class JetankSettings(BaseSettings):
     motors: MotorsConfig = MotorsConfig()
     drive: DriveConfig = DriveConfig()
     teleop: TeleopConfig = TeleopConfig()
+    display: DisplayConfig = DisplayConfig()
+    power: PowerConfig = PowerConfig()
     camera: CameraConfig = CameraConfig()
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
