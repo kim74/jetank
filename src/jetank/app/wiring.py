@@ -15,11 +15,13 @@ from jetank.drivers.fake.camera import FakeCamera
 from jetank.drivers.fake.display import FakeDisplay
 from jetank.drivers.fake.motors import FakeMotorDriver
 from jetank.drivers.fake.power import FakePowerMonitor
+from jetank.drivers.fake.servo_bus import FakeServo, FakeServoBus
 from jetank.drivers.system_clock import SystemClock
 
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from jetank.config.servos import ServosConfig
     from jetank.config.settings import (
         CameraConfig,
         DisplayConfig,
@@ -32,6 +34,10 @@ if TYPE_CHECKING:
     from jetank.interfaces.display import Display
     from jetank.interfaces.motors import MotorDriver
     from jetank.interfaces.power import PowerMonitor
+    from jetank.interfaces.servo import ServoBus
+
+#: Servo IDs simulated by the fake bus (the JETANK arm, gripper and camera tilt).
+FAKE_SERVO_IDS = (1, 2, 3, 4, 5)
 
 
 def build_motor_driver(config: MotorsConfig) -> MotorDriver:
@@ -68,6 +74,15 @@ def build_power_monitor(config: PowerConfig) -> PowerMonitor:
     from jetank.drivers.ina219 import Ina219PowerMonitor
 
     return Ina219PowerMonitor.open(config)
+
+
+def build_servo_bus(config: ServosConfig) -> ServoBus:
+    """Create the serial servo bus selected by ``config.backend``."""
+    if config.backend == "fake":
+        return FakeServoBus(servos={servo_id: FakeServo() for servo_id in FAKE_SERVO_IDS})
+    from jetank.drivers.scs_bus import ScsServoBus
+
+    return ScsServoBus.open(config)
 
 
 @dataclass

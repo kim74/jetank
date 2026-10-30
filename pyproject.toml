@@ -23,7 +23,7 @@ dependencies = [
 # Hardware backends. OpenCV comes from the JetPack apt package (GStreamer-enabled build),
 # so it is intentionally not listed here — installing opencv-python from PyPI would shadow it.
 # Pillow (OLED text) is satisfied by Ubuntu's python3-pil on the Jetson.
-hardware = ["smbus2>=0.4", "pillow>=9.0"]
+hardware = ["smbus2>=0.4", "pillow>=9.0", "pyserial>=3.5"]
 dev = [
     "pillow>=9.0",
     "pytest>=8",
@@ -64,7 +64,7 @@ files = ["src"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["cv2", "cv2.*", "smbus2", "PIL", "PIL.*"]
+module = ["cv2", "cv2.*", "smbus2", "PIL", "PIL.*", "serial", "serial.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

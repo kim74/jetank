@@ -7,6 +7,7 @@ from jetank.drivers.fake.host import FakeHostInfo
 from jetank.drivers.fake.i2c import FakeI2CBus
 from jetank.drivers.fake.motors import FakeMotorDriver
 from jetank.drivers.fake.power import FakePowerMonitor
+from jetank.drivers.fake.servo_bus import FakeServo, FakeServoBus
 
 __all__ = [
     "FakeCamera",
@@ -16,4 +17,6 @@ __all__ = [
     "FakeI2CBus",
     "FakeMotorDriver",
     "FakePowerMonitor",
+    "FakeServo",
+    "FakeServoBus",
 ]

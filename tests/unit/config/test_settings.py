@@ -161,3 +161,22 @@ def test_display_height_must_be_a_supported_panel(height: int) -> None:
 def test_display_backend_can_be_set_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JETANK_DISPLAY__BACKEND", "hardware")
     assert load_settings().display.backend == "hardware"
+
+
+def test_gripper_defaults_match_the_measured_jetank() -> None:
+    settings = load_settings()
+    assert settings.servos.backend == "fake"
+    assert settings.servos.port == "/dev/ttyTHS1"
+    calibration = settings.gripper.calibration
+    assert (calibration.servo_id, calibration.open_position, calibration.closed_position) == (
+        4,
+        745,
+        965,
+    )
+
+
+def test_gripper_limits_too_close_are_rejected() -> None:
+    from jetank.config.servos import GripperConfig
+
+    with pytest.raises(ValidationError, match="20 counts apart"):
+        GripperConfig(open_position=900, closed_position=905)

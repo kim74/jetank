@@ -32,6 +32,19 @@ power:                    # INA219 battery monitor (bus voltage only)
   i2c_address: 0x41
   low_voltage_v: 10.5     # flagged LOW on the display at or below this (3.5 V per cell, 3S)
 
+servos:                   # Feetech SCS serial bus servos (UART, header pins 8/10)
+  backend: hardware       # user must be in the `dialout` group
+  port: /dev/ttyTHS1
+  baud_rate: 1000000
+  response_timeout_s: 0.02
+  retries: 2
+
+gripper:                  # measured by hand 2026-10-30: open ~734, closed ~975
+  servo_id: 4
+  open_position: 745      # ~10 counts short of each mechanical end
+  closed_position: 965
+  move_time_s: 0.8        # full stroke; shorter moves take proportionally less
+
 camera:
   backend: hardware       # IMX219 on CAM0
   sensor_id: 0

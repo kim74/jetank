@@ -19,9 +19,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from jetank.config.base import SECTION as _SECTION
+from jetank.config.base import Backend
+from jetank.config.servos import GripperConfig, ServosConfig
 from jetank.domain.coco import COCO_CLASSES
 from jetank.domain.detection import Response
 from jetank.errors import ConfigurationError
@@ -37,10 +40,6 @@ ENV_NESTED_DELIMITER: Final = "__"
 NON_SETTING_ENV_VARS: Final = frozenset(
     {"JETANK_ALLOW_MOTION", "JETANK_ALLOW_GROUND_DRIVE", "JETANK_CIRCLE_S"}
 )
-
-Backend = Literal["hardware", "fake"]
-
-_SECTION = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
 
 class MotorChannelConfig(BaseModel):
@@ -290,6 +289,8 @@ class JetankSettings(BaseSettings):
     teleop: TeleopConfig = TeleopConfig()
     display: DisplayConfig = DisplayConfig()
     power: PowerConfig = PowerConfig()
+    servos: ServosConfig = ServosConfig()
+    gripper: GripperConfig = GripperConfig()
     camera: CameraConfig = CameraConfig()
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()

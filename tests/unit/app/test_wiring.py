@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from jetank.app import wiring
-from jetank.app.wiring import build_display, build_power_monitor, build_robot
+from jetank.app.wiring import (
+    FAKE_SERVO_IDS,
+    build_display,
+    build_power_monitor,
+    build_robot,
+    build_servo_bus,
+)
+from jetank.config.servos import ServosConfig
 from jetank.config.settings import DisplayConfig, JetankSettings, PowerConfig
 from jetank.domain.models import DriveCommand
 from jetank.drivers.fake import (
@@ -63,3 +70,9 @@ def test_fake_display_matches_panel_height() -> None:
 
 def test_fake_power_monitor_is_built_by_default() -> None:
     assert isinstance(build_power_monitor(PowerConfig()), FakePowerMonitor)
+
+
+def test_fake_servo_bus_simulates_the_jetank_servos() -> None:
+    bus = build_servo_bus(ServosConfig())
+    assert all(bus.ping(servo_id) for servo_id in FAKE_SERVO_IDS)
+    assert not bus.ping(6)

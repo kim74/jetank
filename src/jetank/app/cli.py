@@ -13,6 +13,7 @@ import json
 import logging
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,9 +29,11 @@ from jetank.app.wiring import (
     build_display,
     build_motor_driver,
     build_power_monitor,
+    build_servo_bus,
 )
 from jetank.config.settings import load_settings
 from jetank.control.drive import DriveController
+from jetank.control.gripper import GripperController
 from jetank.control.status import StatusReporter
 from jetank.control.teleop import TeleopSession
 from jetank.domain.status import RobotMode
@@ -49,6 +52,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_WARMUP_FRAMES = 15
+#: Extra wait after a gripper move's nominal time before its result is read back.
+GRIPPER_SETTLE_S = 0.3
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -73,6 +78,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     commands.add_parser(
         "display", help="show hostname, IP address and battery on the OLED until Ctrl-C"
+    )
+
+    gripper = commands.add_parser(
+        "gripper", help="read the gripper, or move it (then it goes limp again on exit)"
+    )
+    gripper.add_argument("action", choices=["status", "open", "close", "set"])
+    gripper.add_argument(
+        "opening", nargs="?", type=float, help="for 'set': 0.0 = closed ... 1.0 = open"
     )
     return parser
 
@@ -170,6 +183,38 @@ def _cmd_display(settings: JetankSettings) -> int:
     return 0
 
 
+def _cmd_gripper(settings: JetankSettings, action: str, opening: float | None) -> int:
+    if (action == "set") != (opening is not None):
+        raise JetankError("an opening (0.0-1.0) is needed with 'set', and only with 'set'")
+    if opening is not None and not 0.0 <= opening <= 1.0:
+        raise JetankError(f"opening must be within 0.0-1.0, got {opening}")
+    if action != "status" and settings.servos.backend == "fake":
+        logger.warning("the servo backend is FAKE: the gripper will not move")
+    config = settings.gripper
+    with (
+        contextlib.closing(build_servo_bus(settings.servos)) as bus,
+        GripperController(bus, config.calibration, config.move_time_s) as gripper,
+        raise_on_termination_signals(),
+    ):
+        if action != "status":
+            target = {"open": 1.0, "close": 0.0}.get(action, opening)
+            assert target is not None
+            try:
+                gripper.set_opening(target)
+                time.sleep(config.move_time_s + GRIPPER_SETTLE_S)
+            except KeyboardInterrupt as exc:
+                logger.info("gripper move interrupted: %s", exc or "Ctrl-C")
+        status = gripper.status()
+    servo = status.servo
+    print(
+        f"gripper (servo {servo.servo_id}): opening {status.opening:.2f}, "
+        f"position {servo.position}, {servo.voltage_v:.1f} V, {servo.temperature_c} °C, "
+        f"torque {'on' if servo.torque_enabled else 'off'}"
+        + (f", fault 0x{servo.error_flags:02X}" if servo.error_flags else "")
+    )
+    return 0
+
+
 def _open_optional_display(settings: JetankSettings) -> Display | None:
     try:
         return build_display(settings.display)
@@ -210,6 +255,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_teleop(settings)
         if args.command == "display":
             return _cmd_display(settings)
+        if args.command == "gripper":
+            return _cmd_gripper(settings, args.action, args.opening)
         return _cmd_snapshot(settings, args.output, args.warmup)
     except JetankError as exc:
         print(f"error: {exc}", file=sys.stderr)

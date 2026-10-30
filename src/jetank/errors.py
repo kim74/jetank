@@ -23,6 +23,10 @@ class CameraError(HardwareError):
     """The camera could not be opened or failed to deliver a frame."""
 
 
+class ServoError(HardwareError):
+    """A bus servo did not answer, answered garbage, or reported a fault."""
+
+
 class DriverClosedError(JetankError):
     """An operation was attempted on a driver that has already been closed."""
 

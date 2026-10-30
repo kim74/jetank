@@ -168,3 +168,77 @@ def test_teleop_runs_without_a_working_display(
     assert served == [True]
     assert motors.closed
     assert "continuing without it" in caplog.text
+
+
+def test_gripper_status_is_read_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeServo, FakeServoBus
+
+    bus = FakeServoBus(servos={4: FakeServo(position=855)})
+    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    assert main(["gripper", "status"]) == 0
+    assert "opening 0.50, position 855" in capsys.readouterr().out
+    assert bus.moves == []
+    assert bus.torque_log == []
+    assert bus.closed
+
+
+@pytest.mark.parametrize(
+    ("args", "target"), [(["open"], 745), (["close"], 965), (["set", "0.5"], 855)]
+)
+def test_gripper_moves_then_goes_limp(
+    monkeypatch: pytest.MonkeyPatch, args: list[str], target: int
+) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeServo, FakeServoBus
+
+    bus = FakeServoBus(servos={4: FakeServo(position=900)})
+    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
+    assert main(["gripper", *args]) == 0
+    assert bus.moves[-1].position == target
+    assert bus.torque_log[-1] == (4, False)
+    assert bus.closed
+
+
+def test_gripper_interrupted_move_still_goes_limp(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeServo, FakeServoBus
+
+    bus = FakeServoBus(servos={4: FakeServo(position=900)})
+
+    def interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    assert main(["gripper", "open"]) == 0
+    assert bus.torque_log[-1] == (4, False)
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["set"], "needed with 'set'"),
+        (["open", "0.5"], "only with 'set'"),
+        (["set", "1.5"], "0.0-1.0"),
+    ],
+)
+def test_gripper_rejects_bad_arguments(
+    args: list[str], message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["gripper", *args]) == 1
+    assert message in capsys.readouterr().err
+
+
+def test_gripper_missing_servo_exits_with_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeServoBus
+
+    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: FakeServoBus())
+    assert main(["gripper", "status"]) == 1
+    assert "servo 4 does not answer" in capsys.readouterr().err

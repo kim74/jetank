@@ -12,8 +12,10 @@ from jetank.drivers.fake import (
     FakeI2CBus,
     FakeMotorDriver,
     FakePowerMonitor,
+    FakeServo,
+    FakeServoBus,
 )
-from jetank.errors import DriverClosedError, HardwareError
+from jetank.errors import DriverClosedError, HardwareError, ServoError
 from jetank.interfaces import (
     Camera,
     Clock,
@@ -22,6 +24,8 @@ from jetank.interfaces import (
     I2CBus,
     MotorDriver,
     PowerMonitor,
+    SerialPort,
+    ServoBus,
 )
 
 
@@ -33,6 +37,7 @@ def test_fakes_satisfy_their_interfaces(clock: FakeClock) -> None:
     assert isinstance(FakeDisplay(), Display)
     assert isinstance(FakePowerMonitor(), PowerMonitor)
     assert isinstance(FakeHostInfo(), HostInfo)
+    assert isinstance(FakeServoBus(), ServoBus)
 
 
 class TestFakeClock:
@@ -148,3 +153,39 @@ class TestFakePowerMonitor:
         power.close()
         with pytest.raises(DriverClosedError):
             power.read_battery()
+
+
+class TestFakeServoBus:
+    def test_goal_is_reached_only_with_torque(self) -> None:
+        bus = FakeServoBus(servos={4: FakeServo(position=500, goal=500)})
+        bus.move(4, 600, 0.5)
+        assert bus.read_state(4).position == 500
+        bus.set_torque(4, True)
+        assert bus.read_state(4).position == 600
+
+    def test_close_switches_torque_off(self) -> None:
+        bus = FakeServoBus(servos={4: FakeServo()})
+        bus.set_torque(4, True)
+        bus.close()
+        bus.close()
+        assert bus.torque_log == [(4, True), (4, False)]
+        with pytest.raises(DriverClosedError):
+            bus.ping(4)
+
+    def test_missing_servo_and_bad_values(self) -> None:
+        bus = FakeServoBus(servos={4: FakeServo()})
+        with pytest.raises(ServoError):
+            bus.read_state(3)
+        with pytest.raises(ValueError, match="position"):
+            bus.move(4, 2000, 0.5)
+        with pytest.raises(ValueError, match="duration"):
+            bus.move(4, 500, 0.0)
+        bus.fail_with = ServoError("bus down")
+        with pytest.raises(ServoError):
+            bus.ping(4)
+
+
+def test_scs_test_port_satisfies_serial_interface() -> None:
+    from tests.unit.drivers.scs_helpers import FakeScsPort
+
+    assert isinstance(FakeScsPort(), SerialPort)
