@@ -176,17 +176,17 @@ def test_gripper_status_is_read_only(
     from jetank.app import cli
     from jetank.drivers.fake import FakeServo, FakeServoBus
 
-    bus = FakeServoBus(servos={4: FakeServo(position=855)})
+    bus = FakeServoBus(servos={4: FakeServo(position=848)})
     monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
     assert main(["gripper", "status"]) == 0
-    assert "opening 0.50, position 855" in capsys.readouterr().out
+    assert "opening 0.50, position 848" in capsys.readouterr().out
     assert bus.moves == []
     assert bus.torque_log == []
     assert bus.closed
 
 
 @pytest.mark.parametrize(
-    ("args", "target"), [(["open"], 745), (["close"], 965), (["set", "0.5"], 855)]
+    ("args", "target"), [(["open"], 955), (["close"], 610), (["set", "0.5"], 848)]
 )
 def test_gripper_moves_then_goes_limp(
     monkeypatch: pytest.MonkeyPatch, args: list[str], target: int
@@ -270,7 +270,7 @@ def test_teleop_gripper_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
     monkeypatch.setattr(cli.TeleopServer, "serve", serve_and_grip)
     assert main(["teleop"]) == 0
-    assert bus.moves[-1].position == 965
+    assert bus.moves[-1].position == 610
     assert events == ["gripper limp, motors closed=True"]
     assert bus.closed
 

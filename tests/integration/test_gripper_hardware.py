@@ -4,8 +4,8 @@ Read-only checks (nothing moves, no torque is switched on):
 
     pytest -m hardware tests/integration/test_gripper_hardware.py
 
-Motion checks open and close the gripper slowly within the configured limits. Keep fingers
-and objects out of the jaws, then:
+Motion checks open and close the gripper slowly within the configured limits, and close the
+empty jaws onto each other at the torque cap. Keep fingers and objects out of the jaws, then:
 
     JETANK_ALLOW_MOTION=1 pytest -m hardware tests/integration/test_gripper_hardware.py -s
 
@@ -42,6 +42,8 @@ PLAUSIBLE_SUPPLY_V: Final = (4.5, 8.4)
 #: How close the servo must get to its target, in counts (~3 degrees).
 POSITION_TOLERANCE: Final = 15
 POLL_S: Final = 0.02
+#: A move counts as finished when the position changes by at most 1 count over this time.
+STILL_S: Final = 0.1
 
 needs_motion = pytest.mark.skipif(
     os.environ.get("JETANK_ALLOW_MOTION") != "1",
@@ -95,10 +97,42 @@ def test_gripper_status_is_plausible(gripper: GripperController) -> None:
     print(f"\ngripper at rest: {status.servo}")
 
 
+def _wait_until_still(gripper: GripperController, timeout_s: float) -> GripperStatus:
+    start = time.monotonic()
+    previous = gripper.status()
+    while True:
+        time.sleep(STILL_S)
+        status = gripper.status()
+        still = (
+            not status.servo.moving and abs(status.servo.position - previous.servo.position) <= 1
+        )
+        if still or time.monotonic() - start > timeout_s:
+            return status
+        previous = status
+
+
+@needs_motion
+def test_closing_empty_jaws_presses_them_together_at_the_torque_cap(
+    gripper: GripperController,
+) -> None:
+    config = _configs()[1]
+    cal = config.calibration
+    target = gripper.shut()
+    time.sleep(config.move_time_s)
+    status = _wait_until_still(gripper, config.move_time_s * 3)
+    servo = status.servo
+    print(f"\nclosing: target {target}, jaws pressed at {servo.position}, load {servo.load:+.2f}")
+    # The jaw play is taken up past the closed limit; the jaws then stop each other short of
+    # the grip position and the servo pushes at its cap.
+    assert min(cal.closed_position, target) <= servo.position <= max(cal.closed_position, target)
+    assert abs(servo.load) >= 0.8 * config.max_torque
+    assert servo.error_flags == 0
+
+
 @needs_motion
 def test_gripper_opens_and_closes_slowly_within_limits(gripper: GripperController) -> None:
     config = _configs()[1]
-    for opening in (0.5, 1.0, 0.0, 0.5):
+    for opening in (0.5, 1.0, 0.01, 0.5):  # 0.01: near closed, short of the jaws' contact
         target = gripper.set_opening(opening)
         status, elapsed_s = _wait_until_near(gripper, target, config.move_time_s * 3)
         reached = status.servo.position

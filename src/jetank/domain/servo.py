@@ -94,12 +94,15 @@ class JointCalibration(BaseModel):
 class GripperCalibration(BaseModel):
     """Raw servo positions at the gripper's software limits.
 
-    Either direction is allowed: on the JETANK, opening lowers the position number.
+    Either direction is allowed (on the JETANK, opening raises the position number).
 
     Attributes:
         servo_id: Bus ID of the gripper servo.
         open_position: Position at the open limit.
         closed_position: Position at the closed limit.
+        grip_overshoot: Counts past the closed limit, away from open, that closing aims at.
+            It takes up play in the jaw mechanics so the jaws really press on an object;
+            the servo's torque cap, not this distance, then bounds the squeeze.
     """
 
     model_config = _VALUE_OBJECT
@@ -107,6 +110,7 @@ class GripperCalibration(BaseModel):
     servo_id: ServoId
     open_position: ServoPosition
     closed_position: ServoPosition
+    grip_overshoot: int = Field(default=0, ge=0, description="counts past the closed limit")
 
     @model_validator(mode="after")
     def _enough_travel(self) -> GripperCalibration:
@@ -114,7 +118,17 @@ class GripperCalibration(BaseModel):
             raise ValueError(
                 f"open and closed positions must be at least {MIN_GRIPPER_SPAN} counts apart"
             )
+        if not 0 <= self.grip_position <= MAX_POSITION:
+            raise ValueError(
+                f"grip position {self.grip_position} lies outside the servo range 0..{MAX_POSITION}"
+            )
         return self
+
+    @property
+    def grip_position(self) -> int:
+        """Raw position closing aims at: ``grip_overshoot`` counts past the closed limit."""
+        away_from_open = 1 if self.closed_position > self.open_position else -1
+        return self.closed_position + away_from_open * self.grip_overshoot
 
     def target(self, opening: float) -> int:
         """Raw position for ``opening`` (0.0 = closed, 1.0 = open); always within the limits.

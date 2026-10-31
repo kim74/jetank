@@ -34,8 +34,9 @@ class ServosConfig(BaseModel):
 class GripperConfig(BaseModel):
     """Gripper servo and its software limits.
 
-    Defaults were measured on 2026-10-30 by moving the unpowered gripper by hand
-    (open ~734, closed ~975) and keeping ~10 counts away from both mechanical ends.
+    Defaults were measured on 2026-10-31 by moving the unpowered gripper by hand
+    (jaws touching ~730, fully open ~965; opening raises the number) and keeping ~10 counts
+    away from both mechanical ends.
 
     Attributes:
         servo_id: Bus ID of the gripper servo.
@@ -43,15 +44,19 @@ class GripperConfig(BaseModel):
         move_time_s: Time for a full open-to-closed stroke; shorter moves are scaled down.
         max_torque: Torque cap as a fraction of the servo's maximum, applied before torque
             is switched on. Bounds the squeeze on a held object and the stall current.
+        grip_overshoot: Counts past ``closed_position`` that closing aims at, to take up the
+            play in the jaw mechanics; see :class:`~jetank.domain.servo.GripperCalibration`.
     """
 
     model_config = SECTION
 
     servo_id: int = Field(default=4, ge=0, le=253)
-    open_position: int = Field(default=745, ge=0, le=MAX_POSITION)
-    closed_position: int = Field(default=965, ge=0, le=MAX_POSITION)
+    open_position: int = Field(default=955, ge=0, le=MAX_POSITION)
+    closed_position: int = Field(default=740, ge=0, le=MAX_POSITION)
     move_time_s: float = Field(default=0.8, ge=0.2, le=5.0)
     max_torque: float = Field(default=0.5, ge=0.1, le=1.0)
+    # Under power the jaws touch at ~670 and press only from ~655 (play); 610 squeezes at the cap.
+    grip_overshoot: int = Field(default=130, ge=0, le=200)
 
     @model_validator(mode="after")
     def _valid_calibration(self) -> GripperConfig:
@@ -64,6 +69,7 @@ class GripperConfig(BaseModel):
             servo_id=self.servo_id,
             open_position=self.open_position,
             closed_position=self.closed_position,
+            grip_overshoot=self.grip_overshoot,
         )
 
 

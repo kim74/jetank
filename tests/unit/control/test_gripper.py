@@ -29,6 +29,21 @@ def test_open_and_shut_go_to_the_limits(gripper: GripperController, bus: FakeSer
     assert bus.servos[4].position == 965
 
 
+def test_closing_aims_past_the_closed_limit_to_squeeze(bus: FakeServoBus) -> None:
+    cal = GripperCalibration(servo_id=4, open_position=955, closed_position=740, grip_overshoot=40)
+    gripper = GripperController(bus, cal, MOVE_TIME_S)
+    assert gripper.shut() == 700
+    assert bus.moves[-1].position == 700
+    assert gripper.set_opening(0.0) == 700
+
+
+def test_any_other_opening_stays_within_the_limits(bus: FakeServoBus) -> None:
+    cal = GripperCalibration(servo_id=4, open_position=955, closed_position=740, grip_overshoot=40)
+    gripper = GripperController(bus, cal, MOVE_TIME_S)
+    assert gripper.set_opening(0.01) == 742
+    assert gripper.open() == 955
+
+
 def test_torque_limit_is_set_before_torque_on(bus: FakeServoBus) -> None:
     order: list[str] = []
 

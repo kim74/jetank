@@ -5,7 +5,8 @@ Layer: control
 
 Safety rules:
 
-* Every target is clamped to the calibrated limits.
+* Every target is clamped to the calibrated limits, except closing (opening 0.0), which aims
+  ``grip_overshoot`` counts past the closed limit to take up play in the jaw mechanics.
 * Before torque is switched on, the servo's goal is set to where it is now, so switching
   torque on cannot make it jump (it may rest outside the limits while limp).
 * Moves take time in proportion to their length (``move_time_s`` for a full stroke).
@@ -95,11 +96,14 @@ class GripperController:
         return self.set_opening(1.0)
 
     def shut(self) -> int:
-        """Move to the closed limit. Returns the target position."""
+        """Close the jaws (aiming at the grip position). Returns the target position."""
         return self.set_opening(0.0)
 
     def set_opening(self, opening: float) -> int:
         """Move to ``opening`` (0.0 = closed, 1.0 = open). Does not wait for the move.
+
+        Closing (0.0) aims at the calibration's grip position, past the closed limit, so the
+        jaws press on whatever they hold with the force the torque cap allows.
 
         Returns:
             The target position sent to the servo.
@@ -109,7 +113,8 @@ class GripperController:
             ServoError: The servo did not answer or reported a fault.
         """
         self._ensure_open()
-        target = self._calibration.clamp(self._calibration.target(opening))
+        cal = self._calibration
+        target = cal.grip_position if opening == 0.0 else cal.clamp(cal.target(opening))
         present = self._bus.read_state(self.servo_id).position
         if not self._engaged:
             self._engage(present)

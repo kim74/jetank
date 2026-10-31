@@ -168,11 +168,12 @@ def test_gripper_defaults_match_the_measured_jetank() -> None:
     assert settings.servos.backend == "fake"
     assert settings.servos.port == "/dev/ttyTHS1"
     assert settings.gripper.max_torque == 0.5
+    assert settings.gripper.grip_overshoot == 130  # jaw play: they press only from ~655
     calibration = settings.gripper.calibration
     assert (calibration.servo_id, calibration.open_position, calibration.closed_position) == (
         4,
-        745,
-        965,
+        955,
+        740,
     )
 
 
@@ -181,6 +182,20 @@ def test_gripper_limits_too_close_are_rejected() -> None:
 
     with pytest.raises(ValidationError, match="20 counts apart"):
         GripperConfig(open_position=900, closed_position=905)
+
+
+def test_grip_overshoot_reaches_the_calibration() -> None:
+    from jetank.config.servos import GripperConfig
+
+    config = GripperConfig(open_position=955, closed_position=740, grip_overshoot=40)
+    assert config.calibration.grip_position == 700
+
+
+def test_grip_overshoot_past_the_servo_range_is_rejected() -> None:
+    from jetank.config.servos import GripperConfig
+
+    with pytest.raises(ValidationError, match="grip position"):
+        GripperConfig(open_position=500, closed_position=30, grip_overshoot=31)
 
 
 def test_arm_defaults_cover_every_joint_and_stay_inside_servo_limits() -> None:

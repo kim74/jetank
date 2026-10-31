@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from jetank.domain.servo import GripperCalibration, ServoState
 
-# JETANK: opening lowers the position number.
+# Opening lowers the position number here (the reverse of the JETANK).
 CAL = GripperCalibration(servo_id=4, open_position=745, closed_position=965)
 
 
@@ -55,6 +55,43 @@ def test_calibration_needs_enough_travel() -> None:
 def test_calibration_rejects_positions_beyond_servo_range() -> None:
     with pytest.raises(ValidationError):
         GripperCalibration(servo_id=4, open_position=745, closed_position=1024)
+
+
+def test_grip_position_without_overshoot_is_the_closed_limit() -> None:
+    assert CAL.grip_position == 965
+
+
+def test_grip_position_lies_past_the_closed_limit_away_from_open() -> None:
+    falling = GripperCalibration(
+        servo_id=4, open_position=745, closed_position=965, grip_overshoot=30
+    )
+    rising = GripperCalibration(
+        servo_id=4, open_position=955, closed_position=740, grip_overshoot=40
+    )
+    assert (falling.grip_position, rising.grip_position) == (995, 700)
+
+
+def test_grip_position_never_leaves_the_clamped_limits_via_clamp() -> None:
+    cal = GripperCalibration(servo_id=4, open_position=955, closed_position=740, grip_overshoot=40)
+    assert cal.clamp(cal.grip_position) == 740  # positioning still stops at the limit
+    assert cal.opening(cal.grip_position) == 0.0
+
+
+@pytest.mark.parametrize(("closed", "overshoot"), [(20, 21), (1000, 24)])
+def test_grip_position_must_stay_inside_servo_range(closed: int, overshoot: int) -> None:
+    open_position = 500
+    with pytest.raises(ValidationError, match="grip position"):
+        GripperCalibration(
+            servo_id=4,
+            open_position=open_position,
+            closed_position=closed,
+            grip_overshoot=overshoot,
+        )
+
+
+def test_grip_overshoot_cannot_be_negative() -> None:
+    with pytest.raises(ValidationError):
+        GripperCalibration(servo_id=4, open_position=955, closed_position=740, grip_overshoot=-1)
 
 
 def test_servo_state_rejects_impossible_readings() -> None:
