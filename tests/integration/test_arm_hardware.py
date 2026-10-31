@@ -45,8 +45,10 @@ CONFIG_PATH: Final = Path(__file__).resolve().parents[2] / "config" / "jetank.ya
 TEST_ORDER: Final = (JointName.CAMERA_TILT, JointName.BASE, JointName.ELBOW, JointName.SHOULDER)
 #: Targets stay this many counts inside the configured limits.
 LIMIT_MARGIN: Final = 20
-#: How close a joint must settle to its target, in counts (~2 degrees).
-POSITION_TOLERANCE: Final = 10
+#: How close a joint must settle to its target, in counts (~6 degrees). The servos hold with a
+#: load-dependent offset: the shoulder, carrying the whole arm, settles ~13 counts below home.
+#: A real stall (blocked joint, sensor blind zone) is off by hundreds.
+POSITION_TOLERANCE: Final = 25
 #: A joint counts as settled when its position changes by at most 1 count over this time.
 STILL_S: Final = 0.1
 #: Extra time allowed beyond the planned move duration.
