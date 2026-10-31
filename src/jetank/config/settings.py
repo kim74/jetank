@@ -24,7 +24,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from jetank.config.base import SECTION as _SECTION
 from jetank.config.base import Backend
-from jetank.config.servos import GripperConfig, ServosConfig
+from jetank.config.servos import ArmConfig, GripperConfig, ServosConfig
 from jetank.domain.coco import COCO_CLASSES
 from jetank.domain.detection import Response
 from jetank.errors import ConfigurationError
@@ -291,10 +291,17 @@ class JetankSettings(BaseSettings):
     power: PowerConfig = PowerConfig()
     servos: ServosConfig = ServosConfig()
     gripper: GripperConfig = GripperConfig()
+    arm: ArmConfig = ArmConfig()
     camera: CameraConfig = CameraConfig()
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
     events: EventsConfig = EventsConfig()
+
+    @model_validator(mode="after")
+    def _gripper_is_not_an_arm_joint(self) -> JetankSettings:
+        if any(j.servo_id == self.gripper.servo_id for j in self.arm.joints.values()):
+            raise ValueError("the gripper servo is also configured as an arm joint")
+        return self
 
     @model_validator(mode="after")
     def _watchdog_checked_often_enough(self) -> JetankSettings:

@@ -9,6 +9,8 @@ Safety rules:
 * Before torque is switched on, the servo's goal is set to where it is now, so switching
   torque on cannot make it jump (it may rest outside the limits while limp).
 * Moves take time in proportion to their length (``move_time_s`` for a full stroke).
+* The servo's torque is capped (``max_torque``) before it is switched on, so closing on an
+  object squeezes it with bounded force and a stalled servo draws bounded current.
 * Only the gripper's own servo is ever touched.
 * :meth:`GripperController.close` switches the torque off: the gripper goes limp.
 """
@@ -42,11 +44,21 @@ class GripperController:
         bus: Servo bus the gripper is on.
         calibration: Servo ID and open/closed limits.
         move_time_s: Time for a full open-to-closed stroke.
+        max_torque: Torque cap as a fraction (0, 1] of the servo's maximum.
     """
 
-    def __init__(self, bus: ServoBus, calibration: GripperCalibration, move_time_s: float) -> None:
+    def __init__(
+        self,
+        bus: ServoBus,
+        calibration: GripperCalibration,
+        move_time_s: float,
+        max_torque: float = 1.0,
+    ) -> None:
         if move_time_s <= 0:
             raise ValueError("move time must be positive")
+        if not 0.0 < max_torque <= 1.0:
+            raise ValueError(f"max torque must be within (0, 1], got {max_torque}")
+        self._max_torque = max_torque
         self._bus = bus
         self._calibration = calibration
         self._move_time_s = move_time_s
@@ -134,6 +146,7 @@ class GripperController:
         # did switch its torque on (some firmware does so on a goal write), and close()
         # must still switch it off.
         self._engaged = True
+        self._bus.set_torque_limit(self.servo_id, self._max_torque)
         self._bus.move(self.servo_id, present, _PARK_S)
         self._bus.set_torque(self.servo_id, True)
 

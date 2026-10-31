@@ -138,3 +138,42 @@ def test_close_switches_off_torque_after_a_goal_write(bus: ScsServoBus, port: Fa
     bus.move(4, 900, 0.5)  # some firmware enables torque on a goal write
     bus.close()
     assert port.writes_to(4, scs.TORQUE_ENABLE) == [b"\x00"]
+
+
+def test_torque_limit_is_written_as_tenths_of_a_percent(
+    bus: ScsServoBus, port: FakeScsPort
+) -> None:
+    bus.set_torque_limit(4, 0.5)
+    assert port.writes_to(4, scs.MAX_TORQUE) == [scs.word_bytes(500)]
+
+
+def test_torque_limit_reads_back(bus: ScsServoBus) -> None:
+    assert bus.read_torque_limit(4) == 1.0
+    bus.set_torque_limit(4, 0.35)
+    assert bus.read_torque_limit(4) == pytest.approx(0.35)
+
+
+def test_unchanged_torque_limit_is_not_rewritten(bus: ScsServoBus, port: FakeScsPort) -> None:
+    bus.set_torque_limit(4, 1.0)  # the servo already holds 1000
+    bus.set_torque_limit(4, 0.5)
+    bus.set_torque_limit(4, 0.5)
+    assert port.writes_to(4, scs.MAX_TORQUE) == [scs.word_bytes(500)]
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.01, -0.5])
+def test_torque_limit_out_of_range_is_rejected(
+    bus: ScsServoBus, port: FakeScsPort, fraction: float
+) -> None:
+    with pytest.raises(ValueError, match="torque limit"):
+        bus.set_torque_limit(4, fraction)
+    assert port.sent == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "load"), [(0x0000, 0.0), (0x01F4, 0.5), (0x05F4, -0.5), (0x03FF, 1.0)]
+)
+def test_load_is_decoded_with_direction(
+    bus: ScsServoBus, port: FakeScsPort, raw: int, load: float
+) -> None:
+    port.registers[4][scs.PRESENT_LOAD : scs.PRESENT_LOAD + 2] = scs.word_bytes(raw)
+    assert bus.read_state(4).load == pytest.approx(load)

@@ -177,6 +177,13 @@ def test_request_stop_before_serve_is_harmless() -> None:
     make_server(FakeMotorDriver()).request_stop()
 
 
+def test_packaged_page_has_gripper_controls() -> None:
+    page = load_page().decode()
+    for element in ('id="gripOpen"', 'id="gripClose"', 'id="gripRelease"', 'id="opening"'):
+        assert element in page
+    assert '"gripper"' in page
+
+
 def test_packaged_page_is_the_remote_control() -> None:
     page = load_page().decode("utf-8")
     assert "<title>JETANK Remote</title>" in page

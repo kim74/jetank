@@ -64,7 +64,9 @@ def bus() -> Iterator[ScsServoBus]:
 def gripper(bus: ScsServoBus) -> Iterator[GripperController]:
     """Gripper controller; its teardown switches the torque off even if a test failed."""
     config = _configs()[1]
-    with GripperController(bus, config.calibration, config.move_time_s) as controller:
+    with GripperController(
+        bus, config.calibration, config.move_time_s, config.max_torque
+    ) as controller:
         yield controller
 
 
@@ -107,9 +109,21 @@ def test_gripper_opens_and_closes_slowly_within_limits(gripper: GripperControlle
 
 
 @needs_motion
+def test_torque_limit_is_applied_on_the_servo(bus: ScsServoBus) -> None:
+    config = _configs()[1]
+    with GripperController(
+        bus, config.calibration, config.move_time_s, config.max_torque
+    ) as gripper:
+        gripper.set_opening(0.5)
+        assert bus.read_torque_limit(config.servo_id) == pytest.approx(config.max_torque)
+
+
+@needs_motion
 def test_gripper_is_limp_after_close(bus: ScsServoBus) -> None:
     config = _configs()[1]
-    with GripperController(bus, config.calibration, config.move_time_s) as gripper:
+    with GripperController(
+        bus, config.calibration, config.move_time_s, config.max_torque
+    ) as gripper:
         gripper.set_opening(0.5)
         _wait_until_near(gripper, config.calibration.target(0.5), config.move_time_s * 3)
     assert not bus.read_state(config.servo_id).torque_enabled

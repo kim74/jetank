@@ -123,16 +123,18 @@ def _cmd_teleop(settings: JetankSettings) -> int:
     def announce(port: int) -> None:
         print(f"remote control at http://{socket.gethostname()}.local:{port}/ (Ctrl-C stops)")
 
-    # Entered in this order so that on exit the motors stop before the display is blanked.
+    # Entered in this order so that on exit the motors stop first, then the gripper goes limp,
+    # then the display is blanked.
     with contextlib.ExitStack() as stack:
         power = stack.enter_context(contextlib.closing(build_power_monitor(settings.power)))
         display = _open_optional_display(settings)
         if display is not None:
             stack.callback(close_display_quietly, display)
+        gripper = _open_optional_gripper(settings, stack)
         motors = stack.enter_context(contextlib.closing(build_motor_driver(settings.motors)))
         drive = stack.enter_context(DriveController(motors, clock, settings.drive))
         stack.enter_context(raise_on_termination_signals())
-        session = TeleopSession(drive)
+        session = TeleopSession(drive, gripper)
         server = TeleopServer(session, settings.teleop, load_page())
         reporter = None if display is None else _status_reporter(settings, display, power)
         try:
@@ -193,7 +195,9 @@ def _cmd_gripper(settings: JetankSettings, action: str, opening: float | None) -
     config = settings.gripper
     with (
         contextlib.closing(build_servo_bus(settings.servos)) as bus,
-        GripperController(bus, config.calibration, config.move_time_s) as gripper,
+        GripperController(
+            bus, config.calibration, config.move_time_s, config.max_torque
+        ) as gripper,
         raise_on_termination_signals(),
     ):
         if action != "status":
@@ -213,6 +217,24 @@ def _cmd_gripper(settings: JetankSettings, action: str, opening: float | None) -
         + (f", fault 0x{servo.error_flags:02X}" if servo.error_flags else "")
     )
     return 0
+
+
+def _open_optional_gripper(
+    settings: JetankSettings, stack: contextlib.ExitStack
+) -> GripperController | None:
+    """Gripper for teleop, or ``None`` (with a warning) if the servo bus is unavailable."""
+    try:
+        bus = build_servo_bus(settings.servos)
+    except HardwareError as exc:
+        logger.warning("gripper unavailable, teleop continues without it: %s", exc)
+        return None
+    stack.callback(bus.close)
+    config = settings.gripper
+    gripper = GripperController(bus, config.calibration, config.move_time_s, config.max_torque)
+    stack.callback(gripper.close)
+    if settings.servos.backend == "fake":
+        logger.warning("teleop gripper uses the FAKE servo bus: the gripper will not move")
+    return gripper
 
 
 def _open_optional_display(settings: JetankSettings) -> Display | None:

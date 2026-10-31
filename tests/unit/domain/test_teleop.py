@@ -5,6 +5,9 @@ import pytest
 from jetank.domain.models import DriveCommand, TrackSpeeds
 from jetank.domain.teleop import (
     DriveMessage,
+    GripperAction,
+    GripperMessage,
+    GripperReport,
     Role,
     StopMessage,
     TeleopStatus,
@@ -49,5 +52,44 @@ def test_status_serialises_to_json() -> None:
         "role": "driver",
         "moving": True,
         "speeds": {"left": 0.25, "right": 0.5},
+        "gripper": None,
         "error": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("raw", "action", "opening"),
+    [
+        ('{"type": "gripper", "action": "open"}', GripperAction.OPEN, None),
+        ('{"type": "gripper", "action": "release"}', GripperAction.RELEASE, None),
+        ('{"type": "gripper", "action": "set", "opening": 0.25}', GripperAction.SET, 0.25),
+    ],
+)
+def test_parses_gripper_messages(raw: str, action: GripperAction, opening: float | None) -> None:
+    message = parse_client_message(raw)
+    assert isinstance(message, GripperMessage)
+    assert (message.action, message.opening) == (action, opening)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"type": "gripper", "action": "set"}',
+        '{"type": "gripper", "action": "open", "opening": 0.5}',
+        '{"type": "gripper", "action": "set", "opening": 1.5}',
+        '{"type": "gripper", "action": "squeeze"}',
+    ],
+)
+def test_rejects_invalid_gripper_messages(raw: str) -> None:
+    with pytest.raises(ProtocolError):
+        parse_client_message(raw)
+
+
+def test_status_reports_gripper() -> None:
+    status = TeleopStatus(
+        role=Role.DRIVER,
+        moving=False,
+        speeds=TrackSpeeds.stopped(),
+        gripper=GripperReport(engaged=True, opening=0.5),
+    )
+    assert status.model_dump(mode="json")["gripper"] == {"engaged": True, "opening": 0.5}

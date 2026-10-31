@@ -5,12 +5,21 @@ from typing import TYPE_CHECKING
 import pytest
 
 from jetank.control.drive import DriveController
+from jetank.control.gripper import GripperController
 from jetank.control.teleop import TeleopSession
 from jetank.domain.models import TrackSpeeds
+from jetank.domain.servo import GripperCalibration
 from jetank.domain.status import RobotMode
-from jetank.domain.teleop import DriveMessage, Role, StopMessage
-from jetank.drivers.fake import FakeClock, FakeMotorDriver
-from jetank.errors import HardwareError, ProtocolError
+from jetank.domain.teleop import (
+    DriveMessage,
+    GripperAction,
+    GripperMessage,
+    GripperReport,
+    Role,
+    StopMessage,
+)
+from jetank.drivers.fake import FakeClock, FakeMotorDriver, FakeServo, FakeServoBus
+from jetank.errors import HardwareError, ProtocolError, ServoError
 
 if TYPE_CHECKING:
     from jetank.config.settings import DriveConfig
@@ -163,3 +172,100 @@ def test_motor_failure_propagates_after_emergency_stop(
     with pytest.raises(HardwareError):
         session.handle("a", FORWARD)
     assert motors.current.is_stopped
+
+
+# --- gripper -------------------------------------------------------------------------------
+
+
+def gripper_message(action: str, opening: float | None = None) -> GripperMessage:
+    return GripperMessage(type="gripper", action=GripperAction(action), opening=opening)
+
+
+@pytest.fixture
+def servo_bus() -> FakeServoBus:
+    return FakeServoBus(servos={4: FakeServo(position=855)})
+
+
+@pytest.fixture
+def gripper_session(
+    motors: FakeMotorDriver, clock: FakeClock, drive_config: DriveConfig, servo_bus: FakeServoBus
+) -> TeleopSession:
+    calibration = GripperCalibration(servo_id=4, open_position=745, closed_position=965)
+    gripper = GripperController(servo_bus, calibration, move_time_s=0.8, max_torque=0.5)
+    return TeleopSession(DriveController(motors, clock, drive_config), gripper)
+
+
+def test_driver_operates_the_gripper(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus
+) -> None:
+    gripper_session.connect("a")
+    status = gripper_session.handle("a", gripper_message("open"))
+    assert status.error is None
+    assert status.gripper == GripperReport(engaged=True, opening=1.0)
+    assert servo_bus.servos[4].position == 745
+    gripper_session.handle("a", gripper_message("set", 0.5))
+    assert servo_bus.servos[4].position == 855
+    status = gripper_session.handle("a", gripper_message("release"))
+    assert status.gripper == GripperReport(engaged=False)
+    assert not servo_bus.servos[4].torque_enabled
+
+
+def test_gripper_torque_is_limited_before_it_is_switched_on(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus
+) -> None:
+    gripper_session.connect("a")
+    gripper_session.handle("a", gripper_message("close"))
+    assert servo_bus.torque_limits == [(4, 0.5)]
+    assert servo_bus.servos[4].torque_limit == 0.5
+
+
+def test_observer_cannot_operate_the_gripper(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus
+) -> None:
+    gripper_session.connect("a")
+    gripper_session.connect("b")
+    status = gripper_session.handle("b", gripper_message("open"))
+    assert status.error == "another client is driving"
+    assert servo_bus.moves == []
+
+
+def test_driver_disconnect_releases_the_gripper(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus
+) -> None:
+    gripper_session.connect("a")
+    gripper_session.handle("a", gripper_message("close"))
+    gripper_session.disconnect("a")
+    assert not servo_bus.servos[4].torque_enabled
+    assert gripper_session.status("b").gripper == GripperReport(engaged=False)
+
+
+def test_stop_does_not_drop_what_the_gripper_holds(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus
+) -> None:
+    gripper_session.connect("a")
+    gripper_session.handle("a", gripper_message("close"))
+    gripper_session.handle("a", STOP)
+    assert servo_bus.servos[4].torque_enabled
+
+
+def test_gripper_failure_is_reported_and_driving_continues(
+    gripper_session: TeleopSession, servo_bus: FakeServoBus, motors: FakeMotorDriver
+) -> None:
+    gripper_session.connect("a")
+    servo_bus.fail_with = ServoError("servo 4 does not answer")
+    status = gripper_session.handle("a", gripper_message("open"))
+    assert status.error == "gripper failed: servo 4 does not answer"
+    assert status.gripper == GripperReport(engaged=False)
+    assert gripper_session.handle("a", FORWARD).moving
+    assert not motors.current.is_stopped
+    gripper_session.disconnect("a")  # release fails too, but must not raise
+    assert motors.current.is_stopped
+
+
+def test_without_gripper_status_has_none_and_commands_are_refused(
+    session: TeleopSession,
+) -> None:
+    session.connect("a")
+    status = session.handle("a", gripper_message("open"))
+    assert status.gripper is None
+    assert status.error == "this robot has no gripper"

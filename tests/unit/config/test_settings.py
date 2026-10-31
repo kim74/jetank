@@ -167,6 +167,7 @@ def test_gripper_defaults_match_the_measured_jetank() -> None:
     settings = load_settings()
     assert settings.servos.backend == "fake"
     assert settings.servos.port == "/dev/ttyTHS1"
+    assert settings.gripper.max_torque == 0.5
     calibration = settings.gripper.calibration
     assert (calibration.servo_id, calibration.open_position, calibration.closed_position) == (
         4,
@@ -180,3 +181,32 @@ def test_gripper_limits_too_close_are_rejected() -> None:
 
     with pytest.raises(ValidationError, match="20 counts apart"):
         GripperConfig(open_position=900, closed_position=905)
+
+
+def test_arm_defaults_cover_every_joint_and_stay_inside_servo_limits() -> None:
+    from jetank.domain.servo import JointName
+
+    joints = load_settings().arm.joints
+    assert set(joints) == set(JointName)
+    assert joints[JointName.ELBOW].servo_id == 3
+    for joint in joints.values():
+        assert 20 <= joint.min_position < joint.max_position <= 1003
+
+
+def test_arm_joints_cannot_share_a_servo(tmp_path: Path) -> None:
+    text = (
+        "arm:\n  joints:\n"
+        "    base: {servo_id: 1, min_position: 460, max_position: 983, home_position: 875}\n"
+        "    shoulder: {servo_id: 1, min_position: 223, max_position: 948, home_position: 870}\n"
+    )
+    with pytest.raises(ConfigurationError, match="same servo ID"):
+        load_settings(write(tmp_path, text))
+
+
+def test_gripper_servo_cannot_be_an_arm_joint(tmp_path: Path) -> None:
+    text = (
+        "arm:\n  joints:\n"
+        "    base: {servo_id: 4, min_position: 460, max_position: 983, home_position: 875}\n"
+    )
+    with pytest.raises(ConfigurationError, match="also configured as an arm joint"):
+        load_settings(write(tmp_path, text))

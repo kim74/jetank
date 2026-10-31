@@ -91,6 +91,9 @@ class ScsServoBus:
             temperature_c=live.params[scs.PRESENT_TEMPERATURE - at],
             moving=bool(live.params[scs.MOVING - at]),
             torque_enabled=bool(torque.params[0]),
+            load=scs.load_fraction(
+                scs.word(live.params[scs.PRESENT_LOAD - at], live.params[scs.PRESENT_LOAD - at + 1])
+            ),
             error_flags=live.error,
         )
 
@@ -102,6 +105,20 @@ class ScsServoBus:
         self._write(servo_id, scs.TORQUE_ENABLE, bytes([int(enabled)]))
         if not enabled:
             self._torque_on.discard(servo_id)
+
+    def read_torque_limit(self, servo_id: int) -> float:
+        """The servo's current torque limit as a fraction of its maximum (diagnostics)."""
+        raw = self._read(servo_id, scs.MAX_TORQUE, 2).params
+        return scs.word(raw[0], raw[1]) / scs.TORQUE_FULL_SCALE
+
+    def set_torque_limit(self, servo_id: int, fraction: float) -> None:
+        """Write the torque limit, skipping the write if the servo already has it."""
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(f"torque limit must be within (0, 1], got {fraction}")
+        value = max(1, round(fraction * scs.TORQUE_FULL_SCALE))
+        if round(self.read_torque_limit(servo_id) * scs.TORQUE_FULL_SCALE) != value:
+            self._write(servo_id, scs.MAX_TORQUE, scs.word_bytes(value))
+            logger.info("servo %d torque limit set to %.0f %%", servo_id, fraction * 100)
 
     def move(self, servo_id: int, position: int, duration_s: float) -> None:
         """Set a goal reached in about ``duration_s``.

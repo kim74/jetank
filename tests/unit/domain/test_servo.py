@@ -67,3 +67,19 @@ def test_servo_state_rejects_impossible_readings() -> None:
             moving=False,
             torque_enabled=False,
         )
+
+
+def test_joint_limits_must_be_ordered_and_contain_home() -> None:
+    from jetank.domain.servo import JointCalibration
+
+    with pytest.raises(ValidationError, match="below"):
+        JointCalibration(servo_id=1, min_position=900, max_position=500, home_position=700)
+    with pytest.raises(ValidationError, match="within the limits"):
+        JointCalibration(servo_id=1, min_position=500, max_position=900, home_position=950)
+
+
+def test_joint_clamp() -> None:
+    from jetank.domain.servo import JointCalibration
+
+    joint = JointCalibration(servo_id=1, min_position=460, max_position=983, home_position=875)
+    assert (joint.clamp(1022), joint.clamp(300), joint.clamp(700)) == (983, 460, 700)

@@ -26,14 +26,22 @@ READ: Final = 0x02
 WRITE: Final = 0x03
 
 # Registers (SCS series memory table)
+#: Torque limit, 0-1000 (0.1 % of maximum). In the EPROM area, but with the lock register
+#: (48) set, as it is on the JETANK, writes are not saved and last until power-off.
+MAX_TORQUE: Final = 16
 TORQUE_ENABLE: Final = 40
 GOAL_POSITION: Final = 42  # 2 bytes, then goal time (ms, 2 bytes), then speed (2 bytes)
 PRESENT_POSITION: Final = 56  # start of the live block read by ``read_state``
+PRESENT_LOAD: Final = 60  # bits 0-9: 0.1 % of maximum torque; bit 10: direction
 PRESENT_VOLTAGE: Final = 62  # 0.1 V units
 PRESENT_TEMPERATURE: Final = 63  # degrees Celsius
 MOVING: Final = 66
 #: Registers PRESENT_POSITION..MOVING read in one transfer.
 LIVE_BLOCK_LENGTH: Final = MOVING - PRESENT_POSITION + 1
+
+#: Full scale of the torque limit and load registers.
+TORQUE_FULL_SCALE: Final = 1000
+_LOAD_DIRECTION_BIT: Final = 0x400
 
 #: Bytes in a status reply besides its parameters.
 STATUS_OVERHEAD: Final = 6
@@ -107,6 +115,12 @@ def parse_status(data: bytes, expected_id: int, expected_params: int) -> StatusP
     if checksum(body) != data[expected_size - 1]:
         raise ServoError(f"servo {expected_id}: checksum mismatch in {data.hex(' ')}")
     return StatusPacket(servo_id=servo_id, error=error, params=bytes(data[5 : expected_size - 1]))
+
+
+def load_fraction(raw: int) -> float:
+    """Signed load in [-1, 1] from the raw present-load register."""
+    magnitude = min(raw & (_LOAD_DIRECTION_BIT - 1), TORQUE_FULL_SCALE) / TORQUE_FULL_SCALE
+    return -magnitude if raw & _LOAD_DIRECTION_BIT else magnitude
 
 
 def word(high: int, low: int) -> int:

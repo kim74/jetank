@@ -50,6 +50,15 @@
   .bar { position: relative; height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
   .bar span { position: absolute; top: 0; bottom: 0; left: 50%; background: var(--accent); }
   .hint { font-size: 13px; color: var(--muted); margin: 0; }
+  .gripper { display: grid; gap: 10px; }
+  .gripper h2 { font-size: 15px; margin: 0; display: flex; justify-content: space-between; }
+  .gripper .buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .gripper button {
+    padding: 12px 6px; font-size: 16px; font-weight: 600; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  .gripper button:active { filter: brightness(0.9); }
+  .gripper:disabled, .gripper button:disabled, .gripper input:disabled { opacity: 0.45; cursor: default; }
 </style>
 </head>
 <body>
@@ -76,18 +85,32 @@
     </label>
   </section>
 
+  <fieldset id="gripperPanel" class="panel gripper" disabled>
+    <h2>Gripper <span id="gripperState" class="hint">–</span></h2>
+    <div class="buttons">
+      <button id="gripOpen" type="button">Open</button>
+      <button id="gripClose" type="button">Close</button>
+      <button id="gripRelease" type="button">Release</button>
+    </div>
+    <label>Opening <span id="openingText">–</span>
+      <input id="opening" type="range" min="0" max="100" step="5" value="50">
+    </label>
+  </fieldset>
+
   <section class="panel tracks">
     <span>Left</span><div class="bar"><span id="barL"></span></div><span id="valL">0.00</span>
     <span>Right</span><div class="bar"><span id="barR"></span></div><span id="valR">0.00</span>
   </section>
 
   <p class="hint">Drag the pad, or use W A S D / arrow keys. Space or STOP halts the robot.
-    The robot also stops by itself if this page closes, is hidden, or loses the connection.</p>
+    The robot also stops by itself if this page closes, is hidden, or loses the connection.
+    Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.</p>
 </main>
 
 <script>
 "use strict";
 const SEND_PERIOD_MS = 100;   // must stay well below the robot's drive watchdog timeout
+const GRIPPER_SLIDER_MS = 150;  // at most one slider update this often; the gripper is slow
 const RECONNECT_MS = 1000;
 
 const $ = (id) => document.getElementById(id);
@@ -106,6 +129,7 @@ function connect() {
   ws.onclose = () => {
     setConn("disconnected – retrying", "bad");
     $("role").textContent = "–"; $("moving").textContent = "–";
+    $("gripperPanel").disabled = true; $("gripperState").textContent = "–";
     setTimeout(connect, RECONNECT_MS);
   };
   ws.onmessage = (event) => showStatus(JSON.parse(event.data));
@@ -127,6 +151,18 @@ function showStatus(status) {
   else if (ws && ws.readyState === WebSocket.OPEN) setConn("connected", "ok");
   showTrack("L", status.speeds.left);
   showTrack("R", status.speeds.right);
+  showGripper(status.gripper, driver);
+}
+
+function showGripper(gripper, driver) {
+  $("gripperPanel").disabled = !gripper || !driver;
+  if (!gripper) { $("gripperState").textContent = "not available"; return; }
+  if (!gripper.engaged) { $("gripperState").textContent = "limp"; return; }
+  $("gripperState").textContent = "holding " + Math.round(gripper.opening * 100) + " % open";
+  if (!sliderBusy) {
+    $("opening").value = Math.round(gripper.opening * 100);
+    $("openingText").textContent = $("opening").value + " %";
+  }
 }
 
 function showTrack(side, value) {
@@ -166,6 +202,28 @@ setInterval(() => {
 
 $("stop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
 
+// Gripper: buttons send one message each; the slider sends throttled "set" messages.
+const gripper = (action, opening) => send(opening === undefined
+  ? { type: "gripper", action } : { type: "gripper", action, opening });
+$("gripOpen").addEventListener("click", () => gripper("open"));
+$("gripClose").addEventListener("click", () => gripper("close"));
+$("gripRelease").addEventListener("click", () => gripper("release"));
+let sliderBusy = false, sliderTimer = null;
+function sendOpening() {
+  sliderTimer = null;
+  gripper("set", Number($("opening").value) / 100);
+}
+$("opening").addEventListener("input", () => {
+  sliderBusy = true;
+  $("openingText").textContent = $("opening").value + " %";
+  if (sliderTimer === null) sliderTimer = setTimeout(sendOpening, GRIPPER_SLIDER_MS);
+});
+$("opening").addEventListener("change", () => {
+  sliderBusy = false;
+  if (sliderTimer !== null) { clearTimeout(sliderTimer); }
+  sendOpening();
+});
+
 // On-screen pad: up = forward, left = turn left (positive angular).
 const padEl = $("pad");
 function moveKnob(x, y) {
@@ -190,8 +248,12 @@ const KEY_MAP = {
   ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down",
   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
 };
+const GRIPPER_KEYS = { KeyO: "open", KeyC: "close", KeyR: "release" };
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); stopAll(); return; }
+  if (GRIPPER_KEYS[e.code] && !e.repeat && !$("gripperPanel").disabled) {
+    e.preventDefault(); gripper(GRIPPER_KEYS[e.code]); return;
+  }
   const k = KEY_MAP[e.code];
   if (k) { e.preventDefault(); keys.add(k); }
 });

@@ -19,6 +19,8 @@ class FakeServo:
     position: int = 512
     goal: int = 512
     torque_enabled: bool = False
+    torque_limit: float = 1.0
+    load: float = 0.0
     voltage_v: float = 5.4
     temperature_c: int = 25
 
@@ -39,12 +41,14 @@ class FakeServoBus:
         servos: Simulated servos by ID; IDs not listed do not answer.
         moves: Every ``move`` call, in order.
         torque_log: Every ``(servo_id, enabled)`` passed to ``set_torque``, in order.
+        torque_limits: Every ``(servo_id, fraction)`` passed to ``set_torque_limit``.
         fail_with: If set, every call except ``close`` raises this.
     """
 
     servos: dict[int, FakeServo] = field(default_factory=dict)
     moves: list[MoveRecord] = field(default_factory=list)
     torque_log: list[tuple[int, bool]] = field(default_factory=list)
+    torque_limits: list[tuple[int, float]] = field(default_factory=list)
     fail_with: ServoError | None = None
     closed: bool = False
 
@@ -61,6 +65,7 @@ class FakeServoBus:
             temperature_c=servo.temperature_c,
             moving=False,
             torque_enabled=servo.torque_enabled,
+            load=servo.load,
         )
 
     def set_torque(self, servo_id: int, enabled: bool) -> None:
@@ -69,6 +74,13 @@ class FakeServoBus:
         servo.torque_enabled = enabled
         if enabled:
             servo.position = servo.goal  # a real servo drives to its stored goal
+
+    def set_torque_limit(self, servo_id: int, fraction: float) -> None:
+        servo = self._servo(servo_id)
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(f"torque limit must be within (0, 1], got {fraction}")
+        self.torque_limits.append((servo_id, fraction))
+        servo.torque_limit = fraction
 
     def move(self, servo_id: int, position: int, duration_s: float) -> None:
         servo = self._servo(servo_id)

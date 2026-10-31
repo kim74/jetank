@@ -29,6 +29,29 @@ def test_open_and_shut_go_to_the_limits(gripper: GripperController, bus: FakeSer
     assert bus.servos[4].position == 965
 
 
+def test_torque_limit_is_set_before_torque_on(bus: FakeServoBus) -> None:
+    order: list[str] = []
+
+    class OrderedBus(FakeServoBus):
+        def set_torque_limit(self, servo_id: int, fraction: float) -> None:
+            order.append(f"limit {fraction}")
+            super().set_torque_limit(servo_id, fraction)
+
+        def set_torque(self, servo_id: int, enabled: bool) -> None:
+            order.append(f"torque {enabled}")
+            super().set_torque(servo_id, enabled)
+
+    ordered = OrderedBus(servos={4: FakeServo(position=855)})
+    GripperController(ordered, CAL, MOVE_TIME_S, max_torque=0.4).shut()
+    assert order == ["limit 0.4", "torque True"]
+
+
+@pytest.mark.parametrize("max_torque", [0.0, 1.5])
+def test_rejects_invalid_max_torque(bus: FakeServoBus, max_torque: float) -> None:
+    with pytest.raises(ValueError, match="max torque"):
+        GripperController(bus, CAL, MOVE_TIME_S, max_torque=max_torque)
+
+
 def test_goal_is_parked_at_present_position_before_torque_on(
     gripper: GripperController, bus: FakeServoBus
 ) -> None:

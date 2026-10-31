@@ -8,6 +8,7 @@ Positions are raw servo counts (0-1023 on the Feetech SCS series, about 0.195 de
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated, Final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -35,6 +36,8 @@ class ServoState(BaseModel):
         temperature_c: Internal temperature in degrees Celsius.
         moving: Whether the servo reports it is still moving.
         torque_enabled: Whether the servo is actively holding or driving its position.
+        load: Torque the motor is applying, as a signed fraction of its maximum; the sign
+            is the direction of rotation.
         error_flags: Fault bits from the servo's status reply (0 = no fault).
     """
 
@@ -46,7 +49,46 @@ class ServoState(BaseModel):
     temperature_c: int = Field(ge=0, le=255)
     moving: bool
     torque_enabled: bool
+    load: float = Field(default=0.0, ge=-1.0, le=1.0)
     error_flags: int = Field(default=0, ge=0, le=0xFF)
+
+
+class JointName(str, Enum):
+    """Arm joints driven by bus servos."""
+
+    BASE = "base"  # rotation about the vertical axis
+    SHOULDER = "shoulder"
+    ELBOW = "elbow"
+    CAMERA_TILT = "camera_tilt"
+
+
+class JointCalibration(BaseModel):
+    """Servo and software limits of one arm joint, in raw positions.
+
+    Attributes:
+        servo_id: Bus ID of the joint's servo.
+        min_position / max_position: Software limits; targets are clamped to them.
+        home_position: Rest pose of the joint, within the limits.
+    """
+
+    model_config = _VALUE_OBJECT
+
+    servo_id: ServoId
+    min_position: ServoPosition
+    max_position: ServoPosition
+    home_position: ServoPosition
+
+    @model_validator(mode="after")
+    def _ordered(self) -> JointCalibration:
+        if not self.min_position < self.max_position:
+            raise ValueError("min_position must be below max_position")
+        if not self.min_position <= self.home_position <= self.max_position:
+            raise ValueError("home_position must lie within the limits")
+        return self
+
+    def clamp(self, position: int) -> int:
+        """``position`` moved to the nearest limit if it lies outside them."""
+        return max(self.min_position, min(self.max_position, position))
 
 
 class GripperCalibration(BaseModel):

@@ -56,6 +56,15 @@ class ServoBus(Protocol):
         """
         ...
 
+    def set_torque_limit(self, servo_id: int, fraction: float) -> None:
+        """Cap the torque the servo may apply, as a fraction (0, 1] of its maximum.
+
+        Raises:
+            ValueError: ``fraction`` is outside (0, 1].
+            ServoError: The servo did not acknowledge or reported a fault.
+        """
+        ...
+
     def move(self, servo_id: int, position: int, duration_s: float) -> None:
         """Set a new goal position, reached in about ``duration_s``. Does not wait.
 

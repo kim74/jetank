@@ -10,6 +10,9 @@ Safety rules:
 * Only the first client to connect drives; later clients are observers until it leaves.
 * Any client may stop the robot.
 * The driver disconnecting, or sending a malformed message, stops the robot.
+* Only the driver may operate the gripper. When the driver disconnects, the gripper is
+  released (torque off). A gripper fault is reported to the client but does not stop
+  the tracks: the gripper is not needed to drive or stop safely.
 * If the driver goes quiet, the :class:`~jetank.control.drive.DriveController` watchdog stops
   the robot on the next :meth:`~TeleopSession.tick`.
 """
@@ -21,11 +24,20 @@ from typing import TYPE_CHECKING
 
 from jetank.domain.models import TrackSpeeds
 from jetank.domain.status import RobotMode
-from jetank.domain.teleop import DriveMessage, Role, StopMessage, TeleopStatus
-from jetank.errors import ProtocolError
+from jetank.domain.teleop import (
+    AnyClientMessage,
+    GripperAction,
+    GripperMessage,
+    GripperReport,
+    Role,
+    StopMessage,
+    TeleopStatus,
+)
+from jetank.errors import HardwareError, ProtocolError
 
 if TYPE_CHECKING:
     from jetank.control.drive import DriveController
+    from jetank.control.gripper import GripperController
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +45,18 @@ logger = logging.getLogger(__name__)
 class TeleopSession:
     """Arbitrates remote clients in front of one :class:`DriveController`.
 
-    Not thread-safe: call it from a single thread or event loop. The controller is borrowed,
-    not owned; the caller stops and closes the hardware.
+    Not thread-safe: call it from a single thread or event loop. The controllers are
+    borrowed, not owned; the caller stops and closes the hardware.
+
+    Args:
+        drive: Track drive.
+        gripper: Gripper, or ``None`` if the robot has none (or it is unavailable).
     """
 
-    def __init__(self, drive: DriveController) -> None:
+    def __init__(self, drive: DriveController, gripper: GripperController | None = None) -> None:
         self._drive = drive
+        self._gripper = gripper
+        self._gripper_report = GripperReport(engaged=False)
         self._clients: set[str] = set()
         self._driver: str | None = None
         self._speeds = TrackSpeeds.stopped()
@@ -76,8 +94,11 @@ class TeleopSession:
             self._driver = None
             self._stop()
             logger.info("teleop: driver %s disconnected, robot stopped", client_id)
+            if self._gripper is not None:
+                # Also after a failed command, when the gripper's torque state is unknown.
+                self._operate_gripper(GripperAction.RELEASE, None)
 
-    def handle(self, client_id: str, message: DriveMessage | StopMessage) -> TeleopStatus:
+    def handle(self, client_id: str, message: AnyClientMessage) -> TeleopStatus:
         """Apply one message from a client and report the resulting state.
 
         Raises:
@@ -90,6 +111,9 @@ class TeleopSession:
             return self.status(client_id)
         if client_id != self._driver:
             return self.status(client_id, error="another client is driving")
+        if isinstance(message, GripperMessage):
+            error = self._operate_gripper(message.action, message.opening)
+            return self.status(client_id, error=error)
         self._speeds = self._drive.command(message.to_command())
         return self.status(client_id)
 
@@ -115,8 +139,29 @@ class TeleopSession:
             role=Role.DRIVER if client_id == self._driver else Role.OBSERVER,
             moving=moving,
             speeds=self._speeds if moving else TrackSpeeds.stopped(),
+            gripper=None if self._gripper is None else self._gripper_report,
             error=error,
         )
+
+    def _operate_gripper(self, action: GripperAction, opening: float | None) -> str | None:
+        """Carry out a gripper action. Returns an error text instead of raising."""
+        if self._gripper is None:
+            return "this robot has no gripper"
+        try:
+            if action is GripperAction.RELEASE:
+                self._gripper.release()
+                self._gripper_report = GripperReport(engaged=False)
+                return None
+            target = {GripperAction.OPEN: 1.0, GripperAction.CLOSE: 0.0}.get(action, opening)
+            assert target is not None  # GripperMessage guarantees an opening with SET
+            self._gripper.set_opening(target)
+        except HardwareError as exc:
+            logger.warning("teleop: gripper failed: %s", exc)
+            # Its state is unknown now; report it as limp and let the next command retry.
+            self._gripper_report = GripperReport(engaged=False)
+            return f"gripper failed: {exc}"
+        self._gripper_report = GripperReport(engaged=True, opening=target)
+        return None
 
     def _stop(self) -> None:
         self._drive.stop()
