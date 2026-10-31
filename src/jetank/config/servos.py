@@ -96,11 +96,13 @@ class ArmConfig(BaseModel):
 
     Attributes:
         joints: Calibration per joint.
+        speed_cps: Joint speed in servo counts per second (~0.2 degrees per count).
     """
 
     model_config = SECTION
 
     joints: dict[JointName, JointCalibration] = Field(default_factory=_default_joints)
+    speed_cps: float = Field(default=150.0, gt=0.0, le=1000.0)
 
     @model_validator(mode="after")
     def _one_servo_per_joint(self) -> ArmConfig:
