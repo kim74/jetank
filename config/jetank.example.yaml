@@ -48,7 +48,7 @@ gripper:                  # measured by hand 2026-10-30: open ~734, closed ~975
 
 arm:                      # measured by hand 2026-10-31; joints not listed can never be commanded
   joints:                 # elbow horn re-fitted 2026-10-31 so its whole travel is readable
-    base:        {servo_id: 1, min_position: 460, max_position: 983, home_position: 875}  # left = low
+    base:        {servo_id: 1, min_position: 164, max_position: 940, home_position: 575}  # left = low
     shoulder:    {servo_id: 2, min_position: 223, max_position: 948, home_position: 870}  # up = low
     elbow:       {servo_id: 3, min_position:  90, max_position: 985, home_position: 479}  # up = high
     camera_tilt: {servo_id: 5, min_position: 244, max_position: 783, home_position: 535}  # up = low

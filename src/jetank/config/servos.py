@@ -71,9 +71,9 @@ def _default_joints() -> dict[JointName, JointCalibration]:
     # Measured 2026-10-31 by moving each limp joint by hand; limits are 20 counts inside the
     # comfortable ends and never beyond the servos' stored angle limits (20..1003).
     return {
-        # left ~440, straight ahead ~875, right reached 1022 (beyond the servo's 1003)
+        # horn re-fitted: left 90 deg 144, straight ahead ~575, right 90 deg 960 (monotonic)
         JointName.BASE: JointCalibration(
-            servo_id=1, min_position=460, max_position=983, home_position=875
+            servo_id=1, min_position=164, max_position=940, home_position=575
         ),
         # raised ~203 (lower number = up), lowered ~968, rest ~870
         JointName.SHOULDER: JointCalibration(
