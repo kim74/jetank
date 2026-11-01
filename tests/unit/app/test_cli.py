@@ -293,5 +293,40 @@ def test_teleop_runs_without_a_servo_bus(
     monkeypatch.setattr(cli, "build_servo_bus", missing)
     monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
-    assert "gripper unavailable" in caplog.text
-    assert sessions[0].status("x").gripper is None  # type: ignore[attr-defined]
+    assert "without gripper and arm" in caplog.text
+    status = sessions[0].status("x")  # type: ignore[attr-defined]
+    assert status.gripper is None
+    assert status.arm is None
+
+
+def test_teleop_arm_jogs_and_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jetank.app import cli
+    from jetank.domain.servo import JointName
+    from jetank.domain.teleop import ArmJogMessage
+    from jetank.drivers.fake import FakeMotorDriver, FakeServo, FakeServoBus
+
+    motors = FakeMotorDriver()
+    events: list[str] = []
+
+    class RecordingBus(FakeServoBus):
+        def set_torque(self, servo_id: int, enabled: bool) -> None:
+            if not enabled:
+                events.append(f"servo {servo_id} limp, motors closed={motors.closed}")
+            super().set_torque(servo_id, enabled)
+
+    bus = RecordingBus(servos={3: FakeServo(position=479), 4: FakeServo(position=900)})
+
+    async def serve_and_jog(self: cli.TeleopServer, on_ready: object = None) -> None:
+        session = self._session  # type: ignore[attr-defined]
+        session.connect("a")
+        message = ArmJogMessage(type="arm", joint=JointName.ELBOW, direction=1)
+        assert session.handle("a", message).error is None
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    monkeypatch.setattr(cli.TeleopServer, "serve", serve_and_jog)
+    assert main(["teleop"]) == 0
+    assert bus.moves[-1].position == 479 + 15  # default jog step, elbow extends
+    assert events == ["servo 3 limp, motors closed=True"]
+    assert bus.closed

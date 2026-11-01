@@ -10,6 +10,9 @@ Safety rules:
 * Before a joint's torque is switched on, its goal is set to where it is now, so switching
   torque on cannot make it jump (a limp joint may rest outside its limits).
 * Moves run at a bounded speed (``speed_cps``), however far the target.
+* A jog (:meth:`ArmController.jog`) never sets a target more than ``JOG_MAX_LEAD_STEPS``
+  steps ahead of where the servo is now, so the joint stops close by once jogging stops,
+  even when a load holds it back.
 * Only the configured joints' servos are ever touched.
 * :meth:`ArmController.close` switches the torque of every engaged joint off: the arm goes
   limp and sags under gravity, so callers move it home first when they can.
@@ -37,6 +40,8 @@ MIN_MOVE_S: Final = 0.1
 MAX_MOVE_S: Final = 65.0
 #: Duration used to park the goal at the present position before torque is switched on.
 _PARK_S: Final = 0.1
+#: How many jog steps a jog target may lead the servo's present position.
+JOG_MAX_LEAD_STEPS: Final = 2
 
 
 class ArmController:
@@ -63,6 +68,7 @@ class ArmController:
         self._joints = dict(joints)
         self._speed_cps = speed_cps
         self._engaged: set[JointName] = set()
+        self._targets: dict[JointName, int] = {}
         self._closed = False
 
     def __enter__(self) -> ArmController:
@@ -85,6 +91,11 @@ class ArmController:
     def engaged(self) -> bool:
         """Whether this controller has switched torque on for any joint."""
         return bool(self._engaged)
+
+    @property
+    def targets(self) -> Mapping[JointName, int]:
+        """Last commanded position of every engaged joint, in raw counts."""
+        return dict(self._targets)
 
     def state(self, joint: JointName) -> ServoState:
         """Read one joint's servo without moving it.
@@ -123,12 +134,39 @@ class ArmController:
         if target != position:
             logger.warning("arm: %s target %d clamped to %d", joint.value, position, target)
         present = self._bus.read_state(cal.servo_id).position
-        if joint not in self._engaged:
-            self._engage(joint, present)
-        duration_s = min(MAX_MOVE_S, max(MIN_MOVE_S, abs(target - present) / self._speed_cps))
-        self._bus.move(cal.servo_id, target, duration_s)
+        duration_s = self._move_to(joint, present, target)
         logger.info("arm: %s %d -> %d in %.2f s", joint.value, present, target, duration_s)
         return duration_s
+
+    def jog(self, joint: JointName, step: int) -> int:
+        """Move ``joint`` ``step`` counts on from its last target, within its limits.
+
+        Meant to be called repeatedly while an operator holds a key: each call extends the
+        move a little, so the joint stops soon after the calls stop. The first jog of a
+        joint starts from its present position. A target that has run ahead of the servo
+        by more than ``JOG_MAX_LEAD_STEPS`` steps is pulled back first. At a limit the jog
+        holds there silently.
+
+        Args:
+            joint: Joint to move.
+            step: Signed change in raw counts (the direction depends on how the servo is
+                mounted, see the joint calibration).
+
+        Returns:
+            The new target position in raw counts.
+
+        Raises:
+            ConfigurationError: ``joint`` has no calibration.
+            ServoError: The servo did not answer or reported a fault.
+        """
+        self._ensure_open()
+        cal = self._calibration(joint)
+        present = self._bus.read_state(cal.servo_id).position
+        lead = JOG_MAX_LEAD_STEPS * abs(step)
+        start = max(present - lead, min(present + lead, self._targets.get(joint, present)))
+        target = cal.clamp(start + step)
+        self._move_to(joint, present, target)
+        return target
 
     def home(self) -> float:
         """Start moving every joint to its home position. Does not wait.
@@ -155,6 +193,7 @@ class ArmController:
             try:
                 self._bus.set_torque(self._joints[joint].servo_id, False)
                 self._engaged.discard(joint)
+                self._targets.pop(joint, None)
             except ServoError as exc:  # keep releasing the others first
                 logger.error("arm: could not release %s: %s", joint.value, exc)
                 first_error = first_error or exc
@@ -174,12 +213,22 @@ class ArmController:
         finally:
             self._closed = True
 
+    def _move_to(self, joint: JointName, present: int, target: int) -> float:
+        """Engage ``joint`` if needed and start the move; ``target`` is already clamped."""
+        if joint not in self._engaged:
+            self._engage(joint, present)
+        duration_s = min(MAX_MOVE_S, max(MIN_MOVE_S, abs(target - present) / self._speed_cps))
+        self._bus.move(self._joints[joint].servo_id, target, duration_s)
+        self._targets[joint] = target
+        return duration_s
+
     def _engage(self, joint: JointName, present: int) -> None:
         # Counted as engaged before any reply: a lost acknowledgement may hide a servo that
         # did switch its torque on, and close() must still switch it off.
         self._engaged.add(joint)
         servo_id = self._joints[joint].servo_id
         self._bus.move(servo_id, present, _PARK_S)
+        self._targets[joint] = present
         self._bus.set_torque(servo_id, True)
 
     def _calibration(self, joint: JointName) -> JointCalibration:

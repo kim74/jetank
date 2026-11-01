@@ -54,6 +54,7 @@ arm:                      # measured by hand 2026-10-31; joints not listed can n
     elbow:       {servo_id: 3, min_position:  90, max_position: 985, home_position: 479}  # up = high
     camera_tilt: {servo_id: 5, min_position: 244, max_position: 783, home_position: 535}  # up = low
   speed_cps: 150         # joint speed in servo counts per second
+  jog_step: 15           # counts per teleop jog message (one every 100 ms while a key is held)
 
 camera:
   backend: hardware       # IMX219 on CAM0

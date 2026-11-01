@@ -59,6 +59,12 @@
   }
   .gripper button:active { filter: brightness(0.9); }
   .gripper:disabled, .gripper button:disabled, .gripper input:disabled { opacity: 0.45; cursor: default; }
+  .arm h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .arm.off { opacity: 0.45; }
+  .joints { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; font-size: 14px; }
+  .joints kbd { font: 600 12px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
+  .joints .pos { font-variant-numeric: tabular-nums; text-align: right; }
+  .joints .held { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -97,6 +103,15 @@
     </label>
   </fieldset>
 
+  <section id="armPanel" class="panel arm off">
+    <h2>Arm <span id="armState" class="hint">–</span></h2>
+    <div class="joints">
+      <span id="jointbase">Base</span><span><kbd>F</kbd> left · <kbd>G</kbd> right</span><span id="posbase" class="pos">limp</span>
+      <span id="jointshoulder">Shoulder</span><span><kbd>H</kbd> up · <kbd>J</kbd> down</span><span id="posshoulder" class="pos">limp</span>
+      <span id="jointelbow">Elbow</span><span><kbd>K</kbd> fold · <kbd>L</kbd> extend</span><span id="poselbow" class="pos">limp</span>
+    </div>
+  </section>
+
   <section class="panel tracks">
     <span>Left</span><div class="bar"><span id="barL"></span></div><span id="valL">0.00</span>
     <span>Right</span><div class="bar"><span id="barR"></span></div><span id="valR">0.00</span>
@@ -104,7 +119,8 @@
 
   <p class="hint">Drag the pad, or use W A S D / arrow keys. Space or STOP halts the robot.
     The robot also stops by itself if this page closes, is hidden, or loses the connection.
-    Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.</p>
+    Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.
+    Arm: hold F/G, H/J or K/L to move a joint; it stops when the key is let go and keeps holding its pose.</p>
 </main>
 
 <script>
@@ -117,6 +133,8 @@ const $ = (id) => document.getElementById(id);
 let ws = null;
 let pad = { linear: 0, angular: 0 };   // from the on-screen pad, each in [-1, 1]
 const keys = new Set();
+const armKeys = new Set();  // held arm keys, as KeyboardEvent.code
+let armEnabled = false;      // arm present and this client is the driver
 let wasMoving = false;
 
 function speedScale() { return Number($("speed").value) / 100; }
@@ -130,6 +148,7 @@ function connect() {
     setConn("disconnected – retrying", "bad");
     $("role").textContent = "–"; $("moving").textContent = "–";
     $("gripperPanel").disabled = true; $("gripperState").textContent = "–";
+    showArm(null, false);
     setTimeout(connect, RECONNECT_MS);
   };
   ws.onmessage = (event) => showStatus(JSON.parse(event.data));
@@ -152,6 +171,24 @@ function showStatus(status) {
   showTrack("L", status.speeds.left);
   showTrack("R", status.speeds.right);
   showGripper(status.gripper, driver);
+  showArm(status.arm, driver);
+}
+
+const ARM_JOINTS = ["base", "shoulder", "elbow"];
+function showArm(arm, driver) {
+  armEnabled = !!arm && driver;
+  if (!armEnabled) armKeys.clear();
+  $("armPanel").classList.toggle("off", !armEnabled);
+  $("armState").textContent = arm ? (driver ? "" : "driver only") : (ws && ws.readyState === WebSocket.OPEN ? "not available" : "–");
+  for (const joint of ARM_JOINTS) {
+    const target = arm ? arm.targets[joint] : undefined;
+    $("pos" + joint).textContent = target === undefined ? "limp" : String(target);
+  }
+  showHeldJoints();
+}
+function showHeldJoints() {
+  const held = new Set([...armKeys].map((code) => ARM_KEYS[code].joint));
+  for (const joint of ARM_JOINTS) $("joint" + joint).className = held.has(joint) ? "held" : "";
 }
 
 function showGripper(gripper, driver) {
@@ -185,6 +222,8 @@ function currentCommand() {
 
 function stopAll() {
   keys.clear();
+  armKeys.clear();
+  showHeldJoints();
   pad = { linear: 0, angular: 0 };
   moveKnob(0, 0);
   wasMoving = false;
@@ -198,6 +237,8 @@ setInterval(() => {
   if (moving) send({ type: "drive", linear: cmd.linear, angular: cmd.angular });
   else if (wasMoving) send({ type: "stop" });
   wasMoving = moving;
+  // Arm: one small step per held key and period; the joint stops when the steps stop.
+  if (armEnabled) for (const code of armKeys) send({ type: "arm", ...ARM_KEYS[code] });
 }, SEND_PERIOD_MS);
 
 $("stop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
@@ -249,15 +290,31 @@ const KEY_MAP = {
   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
 };
 const GRIPPER_KEYS = { KeyO: "open", KeyC: "close", KeyR: "release" };
+// Directions are the sign of the change in servo counts: on the JETANK base left,
+// shoulder up and elbow folding all lower the number.
+const ARM_KEYS = {
+  KeyF: { joint: "base", direction: -1 }, KeyG: { joint: "base", direction: 1 },
+  KeyH: { joint: "shoulder", direction: -1 }, KeyJ: { joint: "shoulder", direction: 1 },
+  KeyK: { joint: "elbow", direction: -1 }, KeyL: { joint: "elbow", direction: 1 },
+};
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); stopAll(); return; }
   if (GRIPPER_KEYS[e.code] && !e.repeat && !$("gripperPanel").disabled) {
     e.preventDefault(); gripper(GRIPPER_KEYS[e.code]); return;
   }
+  // Leave browser shortcuts (Ctrl+F, Ctrl+L, ...) alone.
+  if (ARM_KEYS[e.code] && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (armEnabled) { armKeys.add(e.code); showHeldJoints(); }
+    return;
+  }
   const k = KEY_MAP[e.code];
   if (k) { e.preventDefault(); keys.add(k); }
 });
-window.addEventListener("keyup", (e) => { const k = KEY_MAP[e.code]; if (k) keys.delete(k); });
+window.addEventListener("keyup", (e) => {
+  const k = KEY_MAP[e.code]; if (k) keys.delete(k);
+  if (armKeys.delete(e.code)) showHeldJoints();
+});
 
 // Hidden tab or lost focus: stop now instead of waiting for the watchdog.
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopAll(); });

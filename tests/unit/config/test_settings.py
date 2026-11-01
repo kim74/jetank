@@ -225,3 +225,8 @@ def test_gripper_servo_cannot_be_an_arm_joint(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigurationError, match="also configured as an arm joint"):
         load_settings(write(tmp_path, text))
+
+
+def test_arm_jog_step_defaults_to_one_send_period_at_arm_speed() -> None:
+    arm = load_settings().arm
+    assert arm.jog_step == round(arm.speed_cps * 0.1)  # the page jogs every 100 ms

@@ -4,13 +4,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from jetank.control.arm import ArmController
 from jetank.control.drive import DriveController
 from jetank.control.gripper import GripperController
 from jetank.control.teleop import TeleopSession
 from jetank.domain.models import TrackSpeeds
-from jetank.domain.servo import GripperCalibration
+from jetank.domain.servo import GripperCalibration, JointCalibration, JointName
 from jetank.domain.status import RobotMode
 from jetank.domain.teleop import (
+    ArmJogMessage,
+    ArmReport,
     DriveMessage,
     GripperAction,
     GripperMessage,
@@ -269,3 +272,97 @@ def test_without_gripper_status_has_none_and_commands_are_refused(
     status = session.handle("a", gripper_message("open"))
     assert status.gripper is None
     assert status.error == "this robot has no gripper"
+
+
+def jog(joint: JointName, direction: int) -> ArmJogMessage:
+    return ArmJogMessage.model_validate({"type": "arm", "joint": joint, "direction": direction})
+
+
+@pytest.fixture
+def arm_bus() -> FakeServoBus:
+    return FakeServoBus(servos={1: FakeServo(position=575), 2: FakeServo(position=870)})
+
+
+@pytest.fixture
+def arm_session(
+    motors: FakeMotorDriver, clock: FakeClock, drive_config: DriveConfig, arm_bus: FakeServoBus
+) -> TeleopSession:
+    joints = {
+        JointName.BASE: JointCalibration(
+            servo_id=1, min_position=164, max_position=940, home_position=575
+        ),
+        JointName.SHOULDER: JointCalibration(
+            servo_id=2, min_position=223, max_position=948, home_position=870
+        ),
+    }
+    arm = ArmController(arm_bus, joints, speed_cps=150.0)
+    return TeleopSession(DriveController(motors, clock, drive_config), arm=arm, jog_step=15)
+
+
+def test_driver_jogs_arm_joints_one_step_per_message(
+    arm_session: TeleopSession, arm_bus: FakeServoBus
+) -> None:
+    arm_session.connect("a")
+    arm_session.handle("a", jog(JointName.BASE, -1))
+    status = arm_session.handle("a", jog(JointName.BASE, -1))
+    assert status.error is None
+    assert arm_bus.servos[1].position == 545
+    status = arm_session.handle("a", jog(JointName.SHOULDER, 1))
+    assert arm_bus.servos[2].position == 885
+    assert status.arm == ArmReport(targets={JointName.BASE: 545, JointName.SHOULDER: 885})
+
+
+def test_observer_cannot_jog_the_arm(arm_session: TeleopSession, arm_bus: FakeServoBus) -> None:
+    arm_session.connect("a")
+    arm_session.connect("b")
+    status = arm_session.handle("b", jog(JointName.BASE, 1))
+    assert status.error == "another client is driving"
+    assert arm_bus.moves == []
+
+
+def test_driver_disconnect_leaves_the_arm_holding(
+    arm_session: TeleopSession, arm_bus: FakeServoBus, motors: FakeMotorDriver
+) -> None:
+    arm_session.connect("a")
+    arm_session.handle("a", jog(JointName.SHOULDER, -1))
+    arm_session.disconnect("a")
+    assert motors.current.is_stopped
+    assert arm_bus.servos[2].torque_enabled  # going limp would drop it
+
+
+def test_stop_does_not_drop_the_arm(arm_session: TeleopSession, arm_bus: FakeServoBus) -> None:
+    arm_session.connect("a")
+    arm_session.handle("a", jog(JointName.SHOULDER, -1))
+    arm_session.handle("a", STOP)
+    assert arm_bus.servos[2].torque_enabled
+
+
+def test_jogging_an_uncalibrated_joint_is_reported(arm_session: TeleopSession) -> None:
+    arm_session.connect("a")
+    status = arm_session.handle("a", jog(JointName.ELBOW, 1))
+    assert status.error == "arm joint 'elbow' is not calibrated"
+
+
+def test_arm_failure_is_reported_and_driving_continues(
+    arm_session: TeleopSession, arm_bus: FakeServoBus, motors: FakeMotorDriver
+) -> None:
+    arm_session.connect("a")
+    arm_bus.fail_with = ServoError("servo 1 does not answer")
+    status = arm_session.handle("a", jog(JointName.BASE, 1))
+    assert status.error == "arm failed: servo 1 does not answer"
+    assert arm_session.handle("a", FORWARD).moving
+    assert not motors.current.is_stopped
+
+
+def test_without_arm_status_has_none_and_jogs_are_refused(session: TeleopSession) -> None:
+    session.connect("a")
+    status = session.handle("a", jog(JointName.BASE, 1))
+    assert status.arm is None
+    assert status.error == "this robot has no arm"
+
+
+def test_jog_step_must_be_positive(
+    motors: FakeMotorDriver, clock: FakeClock, drive_config: DriveConfig
+) -> None:
+    with pytest.raises(ValueError, match="jog step"):
+        TeleopSession(DriveController(motors, clock, drive_config), jog_step=0)

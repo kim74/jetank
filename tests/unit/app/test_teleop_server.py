@@ -184,6 +184,15 @@ def test_packaged_page_has_gripper_controls() -> None:
     assert '"gripper"' in page
 
 
+def test_packaged_page_has_arm_keys() -> None:
+    page = load_page().decode()
+    for key in ("KeyF", "KeyG", "KeyH", "KeyJ", "KeyK", "KeyL"):
+        assert key in page
+    assert 'type: "arm"' in page
+    for element in ('id="posbase"', 'id="posshoulder"', 'id="poselbow"'):
+        assert element in page
+
+
 def test_packaged_page_is_the_remote_control() -> None:
     page = load_page().decode("utf-8")
     assert "<title>JETANK Remote</title>" in page

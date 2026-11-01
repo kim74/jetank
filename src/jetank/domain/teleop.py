@@ -4,8 +4,8 @@ Messages exchanged with a remote-control (teleop) client over the network.
 Layer: domain
 
 Client → robot: :class:`DriveMessage` (sent repeatedly while driving, so it doubles as the
-heartbeat that keeps the drive watchdog fed), :class:`StopMessage` and
-:class:`GripperMessage`.
+heartbeat that keeps the drive watchdog fed), :class:`StopMessage`, :class:`GripperMessage`
+and :class:`ArmJogMessage` (sent repeatedly while an arm key is held).
 Robot → client: :class:`TeleopStatus` after every message and on connect.
 """
 
@@ -17,7 +17,7 @@ from typing import Annotated, Final, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from jetank.domain.models import DriveCommand, TrackSpeeds, UnitSpeed
-from jetank.domain.servo import Opening
+from jetank.domain.servo import JointName, Opening, ServoPosition
 from jetank.errors import ProtocolError
 
 _MESSAGE: Final = ConfigDict(frozen=True, extra="forbid")
@@ -74,9 +74,29 @@ class GripperMessage(BaseModel):
         return self
 
 
-AnyClientMessage = DriveMessage | StopMessage | GripperMessage
+class ArmJogMessage(BaseModel):
+    """Request to move one arm joint a small step. Accepted from the driver only.
+
+    Sent repeatedly while the operator holds a key; the joint stops soon after the
+    messages stop.
+
+    Attributes:
+        joint: Joint to move.
+        direction: Sign of the change in raw servo counts. Which way that turns the joint
+            depends on how its servo is mounted (on the JETANK: base left, shoulder up and
+            elbow folding are all -1).
+    """
+
+    model_config = _MESSAGE
+
+    type: Literal["arm"]
+    joint: JointName
+    direction: Literal[-1, 1]
+
+
+AnyClientMessage = DriveMessage | StopMessage | GripperMessage | ArmJogMessage
 ClientMessage = Annotated[
-    Union[DriveMessage, StopMessage, GripperMessage],  # noqa: UP007
+    Union[DriveMessage, StopMessage, GripperMessage, ArmJogMessage],  # noqa: UP007
     Field(discriminator="type"),
 ]
 
@@ -116,6 +136,19 @@ class GripperReport(BaseModel):
     opening: Opening | None = None
 
 
+class ArmReport(BaseModel):
+    """Arm state as last commanded (not read back).
+
+    Attributes:
+        targets: Last commanded position of every powered joint, in raw counts; joints
+            not listed are limp.
+    """
+
+    model_config = _MESSAGE
+
+    targets: dict[JointName, ServoPosition] = Field(default_factory=dict)
+
+
 class TeleopStatus(BaseModel):
     """Robot state reported to a client.
 
@@ -124,6 +157,7 @@ class TeleopStatus(BaseModel):
         moving: Whether the tracks are currently commanded to move.
         speeds: Track speeds last sent to the motors (after the speed limit).
         gripper: Gripper state, or ``None`` when the robot has no working gripper.
+        arm: Arm state, or ``None`` when the robot has no working arm.
         error: Why the last message was rejected, if it was.
     """
 
@@ -134,4 +168,5 @@ class TeleopStatus(BaseModel):
     moving: bool
     speeds: TrackSpeeds
     gripper: GripperReport | None = None
+    arm: ArmReport | None = None
     error: str | None = None

@@ -13,6 +13,10 @@ Safety rules:
 * Only the driver may operate the gripper. When the driver disconnects, the gripper is
   released (torque off). A gripper fault is reported to the client but does not stop
   the tracks: the gripper is not needed to drive or stop safely.
+* Only the driver may jog the arm. Each jog moves a joint one small step, so a joint stops
+  soon after the jog messages stop. When the driver disconnects, the arm keeps holding
+  where it is (going limp would let it fall). An arm fault is reported like a gripper
+  fault and does not stop the tracks.
 * If the driver goes quiet, the :class:`~jetank.control.drive.DriveController` watchdog stops
   the robot on the next :meth:`~TeleopSession.tick`.
 """
@@ -26,6 +30,8 @@ from jetank.domain.models import TrackSpeeds
 from jetank.domain.status import RobotMode
 from jetank.domain.teleop import (
     AnyClientMessage,
+    ArmJogMessage,
+    ArmReport,
     GripperAction,
     GripperMessage,
     GripperReport,
@@ -33,9 +39,10 @@ from jetank.domain.teleop import (
     StopMessage,
     TeleopStatus,
 )
-from jetank.errors import HardwareError, ProtocolError
+from jetank.errors import ConfigurationError, HardwareError, ProtocolError
 
 if TYPE_CHECKING:
+    from jetank.control.arm import ArmController
     from jetank.control.drive import DriveController
     from jetank.control.gripper import GripperController
 
@@ -51,11 +58,26 @@ class TeleopSession:
     Args:
         drive: Track drive.
         gripper: Gripper, or ``None`` if the robot has none (or it is unavailable).
+        arm: Arm, or ``None`` if the robot has none (or it is unavailable).
+        jog_step: Raw counts an arm joint moves per :class:`ArmJogMessage`.
+
+    Raises:
+        ValueError: ``jog_step`` is not positive.
     """
 
-    def __init__(self, drive: DriveController, gripper: GripperController | None = None) -> None:
+    def __init__(
+        self,
+        drive: DriveController,
+        gripper: GripperController | None = None,
+        arm: ArmController | None = None,
+        jog_step: int = 15,
+    ) -> None:
+        if jog_step < 1:
+            raise ValueError("jog step must be positive")
         self._drive = drive
         self._gripper = gripper
+        self._arm = arm
+        self._jog_step = jog_step
         self._gripper_report = GripperReport(engaged=False)
         self._clients: set[str] = set()
         self._driver: str | None = None
@@ -114,6 +136,8 @@ class TeleopSession:
         if isinstance(message, GripperMessage):
             error = self._operate_gripper(message.action, message.opening)
             return self.status(client_id, error=error)
+        if isinstance(message, ArmJogMessage):
+            return self.status(client_id, error=self._jog_arm(message))
         self._speeds = self._drive.command(message.to_command())
         return self.status(client_id)
 
@@ -140,6 +164,7 @@ class TeleopSession:
             moving=moving,
             speeds=self._speeds if moving else TrackSpeeds.stopped(),
             gripper=None if self._gripper is None else self._gripper_report,
+            arm=None if self._arm is None else ArmReport(targets=dict(self._arm.targets)),
             error=error,
         )
 
@@ -161,6 +186,19 @@ class TeleopSession:
             self._gripper_report = GripperReport(engaged=False)
             return f"gripper failed: {exc}"
         self._gripper_report = GripperReport(engaged=True, opening=target)
+        return None
+
+    def _jog_arm(self, message: ArmJogMessage) -> str | None:
+        """Move one joint a step. Returns an error text instead of raising."""
+        if self._arm is None:
+            return "this robot has no arm"
+        try:
+            self._arm.jog(message.joint, message.direction * self._jog_step)
+        except ConfigurationError as exc:
+            return str(exc)
+        except HardwareError as exc:
+            logger.warning("teleop: arm failed: %s", exc)
+            return f"arm failed: {exc}"
         return None
 
     def _stop(self) -> None:

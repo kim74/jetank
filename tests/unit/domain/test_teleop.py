@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from jetank.domain.models import DriveCommand, TrackSpeeds
+from jetank.domain.servo import JointName
 from jetank.domain.teleop import (
+    ArmJogMessage,
+    ArmReport,
     DriveMessage,
     GripperAction,
     GripperMessage,
@@ -38,6 +41,10 @@ def test_parses_stop_message_from_bytes() -> None:
         '{"type": "drive", "linear": 0.5}',
         '{"type": "drive", "linear": NaN, "angular": 0.0}',
         '{"type": "stop", "force": true}',
+        '{"type": "arm", "joint": "elbow", "direction": 2}',
+        '{"type": "arm", "joint": "elbow", "direction": 0}',
+        '{"type": "arm", "joint": "wrist", "direction": 1}',
+        '{"type": "arm", "joint": "elbow"}',
     ],
 )
 def test_rejects_invalid_messages(raw: str) -> None:
@@ -53,6 +60,7 @@ def test_status_serialises_to_json() -> None:
         "moving": True,
         "speeds": {"left": 0.25, "right": 0.5},
         "gripper": None,
+        "arm": None,
         "error": None,
     }
 
@@ -93,3 +101,20 @@ def test_status_reports_gripper() -> None:
         gripper=GripperReport(engaged=True, opening=0.5),
     )
     assert status.model_dump(mode="json")["gripper"] == {"engaged": True, "opening": 0.5}
+
+
+def test_parses_arm_jog_message() -> None:
+    message = parse_client_message('{"type": "arm", "joint": "shoulder", "direction": -1}')
+    assert isinstance(message, ArmJogMessage)
+    assert message.joint is JointName.SHOULDER
+    assert message.direction == -1
+
+
+def test_status_reports_arm_targets_by_joint_name() -> None:
+    status = TeleopStatus(
+        role=Role.DRIVER,
+        moving=False,
+        speeds=TrackSpeeds.stopped(),
+        arm=ArmReport(targets={JointName.BASE: 575}),
+    )
+    assert '"arm":{"targets":{"base":575}}' in status.model_dump_json()
