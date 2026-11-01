@@ -65,11 +65,24 @@
   .joints kbd { font: 600 12px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
   .joints .pos { font-variant-numeric: tabular-nums; text-align: right; }
   .joints .held { color: var(--accent); }
+  .video { position: relative; padding: 0; overflow: hidden; aspect-ratio: 4 / 3; background: #000; }
+  .video img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  #videoState {
+    position: absolute; left: 8px; top: 8px; padding: 2px 8px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; color: #fff; background: rgba(0, 0, 0, 0.6);
+  }
+  #videoState:empty { display: none; }
+  #videoState.bad { background: var(--stop); color: #fff; }
 </style>
 </head>
 <body>
 <main>
   <h1>JETANK Remote</h1>
+
+  <section class="panel video">
+    <img id="video" alt="live camera view">
+    <span id="videoState">connecting…</span>
+  </section>
 
   <section class="panel">
     <dl class="status">
@@ -118,7 +131,8 @@
   </section>
 
   <p class="hint">Drag the pad, or use W A S D / arrow keys. Space or STOP halts the robot.
-    The robot also stops by itself if this page closes, is hidden, or loses the connection.
+    The robot also stops by itself if this page closes, is hidden, or loses the connection,
+    and when the video freezes while it is moving.
     Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.
     Arm: hold F/G, H/J or K/L to move a joint; it stops when the key is let go and keeps holding its pose.</p>
 </main>
@@ -320,7 +334,43 @@ window.addEventListener("keyup", (e) => {
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopAll(); });
 window.addEventListener("blur", stopAll);
 
+// Live video: binary JPEG messages on a second WebSocket. If the picture freezes while the
+// robot is moving, stop it: the driver would otherwise be steering by an old image.
+const VIDEO_RECONNECT_MS = 2000;
+const VIDEO_STALL_MS = 1000;
+let videoWs = null;
+let lastFrameAt = 0;   // performance.now() of the newest frame; 0 = no live video
+let videoUrl = null;
+function setVideoState(text, bad) {
+  $("videoState").textContent = text;
+  $("videoState").className = bad ? "bad" : "";
+}
+function connectVideo() {
+  videoWs = new WebSocket(`ws://${location.host}/video`);
+  videoWs.binaryType = "blob";
+  videoWs.onmessage = (event) => {
+    const url = URL.createObjectURL(event.data);
+    $("video").src = url;
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    videoUrl = url;
+    lastFrameAt = performance.now();
+    setVideoState("", false);
+  };
+  videoWs.onclose = (event) => {
+    lastFrameAt = 0;
+    setVideoState(event.reason ? "no video – " + event.reason : "no video", true);
+    setTimeout(connectVideo, VIDEO_RECONNECT_MS);
+  };
+}
+setInterval(() => {
+  if (lastFrameAt === 0 || performance.now() - lastFrameAt < VIDEO_STALL_MS) return;
+  lastFrameAt = 0;
+  setVideoState("video frozen", true);
+  if (wasMoving || armKeys.size) stopAll();
+}, 200);
+
 connect();
+connectVideo();
 </script>
 </body>
 </html>

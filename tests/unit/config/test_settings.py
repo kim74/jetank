@@ -230,3 +230,17 @@ def test_gripper_servo_cannot_be_an_arm_joint(tmp_path: Path) -> None:
 def test_arm_jog_step_defaults_to_one_send_period_at_arm_speed() -> None:
     arm = load_settings().arm
     assert arm.jog_step == round(arm.speed_cps * 0.1)  # the page jogs every 100 ms
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("video_fps", 0.0),
+        ("video_fps", 31.0),
+        ("video_jpeg_quality", 5),
+        ("video_jpeg_quality", 99),
+    ],
+)
+def test_video_settings_out_of_range_are_rejected(field: str, value: float) -> None:
+    with pytest.raises(ValidationError, match=field):
+        TeleopConfig.model_validate({field: value})

@@ -330,3 +330,54 @@ def test_teleop_arm_jogs_and_goes_limp_after_motors_stop(monkeypatch: pytest.Mon
     assert bus.moves[-1].position == 479 + 15  # default jog step, elbow extends
     assert events == ["servo 3 limp, motors closed=True"]
     assert bus.closed
+
+
+def test_teleop_runs_without_a_camera(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jetank.app import cli
+    from jetank.errors import CameraError
+
+    def missing(_config: object, _clock: object) -> object:
+        raise CameraError("could not open CSI camera sensor-id=0")
+
+    videos: list[object] = []
+
+    async def interrupted_serve(self: cli.TeleopServer, on_ready: object = None) -> None:
+        videos.append(self._video)  # type: ignore[attr-defined]
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_camera", missing)
+    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    assert main(["teleop"]) == 0
+    assert "without video" in caplog.text
+    assert videos == [None]
+
+
+def test_teleop_closes_the_camera_after_the_motors_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jetank.app import cli
+    from jetank.drivers.fake import FakeCamera, FakeMotorDriver
+    from jetank.drivers.system_clock import SystemClock
+
+    events: list[str] = []
+
+    class RecordingMotors(FakeMotorDriver):
+        def close(self) -> None:
+            events.append("motors closed")
+            super().close()
+
+    class RecordingCamera(FakeCamera):
+        def close(self) -> None:
+            events.append("camera closed")
+            super().close()
+
+    async def interrupted_serve(self: cli.TeleopServer, on_ready: object = None) -> None:
+        assert self._video is not None  # type: ignore[attr-defined]
+        raise KeyboardInterrupt
+
+    camera = RecordingCamera(8, 6, SystemClock())
+    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: RecordingMotors())
+    monkeypatch.setattr(cli, "build_camera", lambda _config, _clock: camera)
+    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    assert main(["teleop"]) == 0
+    assert events == ["motors closed", "camera closed"]

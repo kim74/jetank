@@ -24,6 +24,7 @@ from jetank.app.status_display import (
     show_status_until_interrupted,
 )
 from jetank.app.teleop_server import TeleopServer, load_page
+from jetank.app.video_stream import VideoStream, encode_jpeg
 from jetank.app.wiring import (
     build_camera,
     build_display,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
     from jetank.config.settings import JetankSettings
     from jetank.domain.models import Frame
+    from jetank.interfaces.camera import Camera
     from jetank.interfaces.display import Display
     from jetank.interfaces.power import PowerMonitor
 
@@ -131,13 +133,14 @@ def _cmd_teleop(settings: JetankSettings) -> int:
         display = _open_optional_display(settings)
         if display is not None:
             stack.callback(close_display_quietly, display)
+        video = _open_optional_video(settings, clock, stack)
         servos = _open_optional_servos(settings, stack)
         gripper, arm = (None, None) if servos is None else servos
         motors = stack.enter_context(contextlib.closing(build_motor_driver(settings.motors)))
         drive = stack.enter_context(DriveController(motors, clock, settings.drive))
         stack.enter_context(raise_on_termination_signals())
         session = TeleopSession(drive, gripper, arm, settings.arm.jog_step)
-        server = TeleopServer(session, settings.teleop, load_page())
+        server = TeleopServer(session, settings.teleop, load_page(), video)
         reporter = None if display is None else _status_reporter(settings, display, power)
         try:
             asyncio.run(_serve_teleop(server, announce, reporter, session, settings))
@@ -243,6 +246,26 @@ def _open_optional_servos(
     if settings.servos.backend == "fake":
         logger.warning("teleop uses the FAKE servo bus: gripper and arm will not move")
     return gripper, arm
+
+
+def _open_optional_video(
+    settings: JetankSettings, clock: SystemClock, stack: contextlib.ExitStack
+) -> VideoStream | None:
+    """Live video for teleop, or ``None`` (with a warning) if the camera cannot be opened."""
+    try:
+        camera: Camera = build_camera(settings.camera, clock)
+    except HardwareError as exc:
+        logger.warning("camera unavailable, teleop continues without video: %s", exc)
+        return None
+    stack.callback(camera.close)
+    if settings.camera.backend == "fake":
+        logger.warning("teleop uses the FAKE camera: the video shows a test pattern")
+    quality = settings.teleop.video_jpeg_quality
+    video = VideoStream(
+        camera, settings.teleop.video_fps, lambda frame: encode_jpeg(frame, quality)
+    )
+    stack.callback(video.close)
+    return video
 
 
 def _open_optional_display(settings: JetankSettings) -> Display | None:

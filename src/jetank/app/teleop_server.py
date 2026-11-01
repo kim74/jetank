@@ -4,9 +4,10 @@ Remote-control web server: serves the control page and receives commands over a 
 Layer: app
 
 ``GET /`` returns the page; the page opens a WebSocket on ``/ws`` and exchanges the JSON
-messages defined in :mod:`jetank.domain.teleop`. All decisions about who may drive live in
-:class:`~jetank.control.teleop.TeleopSession`; this module only moves bytes and runs the
-watchdog timer.
+messages defined in :mod:`jetank.domain.teleop`. A second WebSocket on ``/video`` carries the
+live camera picture as binary JPEG messages (only when a camera is available). All decisions
+about who may drive live in :class:`~jetank.control.teleop.TeleopSession`; this module only
+moves bytes and runs the watchdog timer.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from jetank.errors import HardwareError, ProtocolError, ServerError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jetank.app.video_stream import VideoStream
     from jetank.config.settings import TeleopConfig
     from jetank.control.teleop import TeleopSession
 
@@ -36,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 PAGE_PATHS = frozenset({"/", "/index.html"})
 WEBSOCKET_PATH = "/ws"
+VIDEO_PATH = "/video"
 # How long shutdown waits for a client to acknowledge closing (the library default is 10 s).
 CLOSE_TIMEOUT_S = 1.0
 
@@ -52,12 +55,20 @@ class TeleopServer:
         session: Arbitration and drive logic.
         config: Listen address and watchdog tick period.
         page: HTML returned for ``GET /``.
+        video: Live camera stream served on ``/video``; ``None`` serves no video (404).
     """
 
-    def __init__(self, session: TeleopSession, config: TeleopConfig, page: bytes) -> None:
+    def __init__(
+        self,
+        session: TeleopSession,
+        config: TeleopConfig,
+        page: bytes,
+        video: VideoStream | None = None,
+    ) -> None:
         self._session = session
         self._config = config
         self._page = page
+        self._video = video
         self._client_ids = itertools.count(1)
         self._stop: asyncio.Event | None = None
         self._failure: HardwareError | None = None
@@ -75,7 +86,7 @@ class TeleopServer:
         self._stop = asyncio.Event()
         try:
             server = await serve(
-                self._handle_client,
+                self._handle_connection,
                 self._config.host,
                 self._config.port,
                 process_request=self._process_request,
@@ -89,13 +100,17 @@ class TeleopServer:
             logger.info("teleop server listening on %s:%d", self._config.host, port)
             if on_ready is not None:
                 on_ready(port)
-            watchdog = asyncio.create_task(self._run_watchdog())
+            tasks = [asyncio.create_task(self._run_watchdog())]
+            if self._video is not None:
+                tasks.append(asyncio.create_task(self._video.run()))
             try:
                 await self._stop.wait()
             finally:
-                watchdog.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await watchdog
+                for task in tasks:
+                    task.cancel()
+                for task in tasks:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
         if self._failure is not None:
             raise self._failure
 
@@ -121,6 +136,12 @@ class TeleopServer:
     def _process_request(self, connection: ServerConnection, request: Request) -> Response | None:
         if request.path == WEBSOCKET_PATH:
             return None  # continue with the WebSocket handshake
+        if request.path == VIDEO_PATH:
+            if self._video is None:
+                return connection.respond(404, "No camera\n")
+            if self._video.failed:
+                return connection.respond(503, "Camera failed\n")
+            return None
         if request.path in PAGE_PATHS:
             headers = Headers(
                 [
@@ -131,6 +152,13 @@ class TeleopServer:
             )
             return Response(200, "OK", headers, self._page)
         return connection.respond(404, "Not found\n")
+
+    async def _handle_connection(self, connection: ServerConnection) -> None:
+        request = connection.request
+        if request is not None and request.path == VIDEO_PATH and self._video is not None:
+            await self._video.serve_viewer(connection)
+        else:
+            await self._handle_client(connection)
 
     async def _handle_client(self, connection: ServerConnection) -> None:
         client_id = f"client-{next(self._client_ids)}@{connection.remote_address}"
