@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from jetank.config.settings import (
     CameraConfig,
+    DetectorConfig,
     DisplayConfig,
     DriveConfig,
     JetankSettings,
@@ -16,6 +17,7 @@ from jetank.config.settings import (
     load_settings,
     unknown_environment_variables,
 )
+from jetank.domain.detection import Response
 from jetank.errors import ConfigurationError
 
 if TYPE_CHECKING:
@@ -244,3 +246,23 @@ def test_arm_jog_step_defaults_to_one_send_period_at_arm_speed() -> None:
 def test_video_settings_out_of_range_are_rejected(field: str, value: float) -> None:
     with pytest.raises(ValidationError, match=field):
         TeleopConfig.model_validate({field: value})
+
+
+def test_detector_responses_default_to_chasing_cats_and_reporting_people() -> None:
+    detector = DetectorConfig()
+    assert detector.response_for("cat") is Response.CHASE
+    assert detector.response_for("person") is Response.ALERT
+    assert detector.response_for("bicycle") is Response.IGNORE
+
+
+def test_detector_responses_must_name_known_classes() -> None:
+    with pytest.raises(ValidationError, match="does not know"):
+        DetectorConfig.model_validate({"responses": {"hedgehog": "chase"}})
+
+
+def test_detector_class_names_can_be_swapped_with_the_model() -> None:
+    detector = DetectorConfig.model_validate(
+        {"class_names": ["fox", "cat"], "responses": {"fox": "chase"}}
+    )
+    assert detector.response_for("fox") is Response.CHASE
+    assert detector.response_for("cat") is Response.IGNORE
