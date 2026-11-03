@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from smbus2 import SMBus
 
 from jetank.config.settings import DriveConfig, MotorsConfig, load_settings
 from jetank.control.drive import DriveController
@@ -30,6 +29,9 @@ from jetank.drivers.pca9685 import LED0_ON_L, duty_to_block
 from jetank.drivers.system_clock import SystemClock
 from jetank.drivers.tb6612_tracks import Tb6612TrackDriver, bridge_outputs
 from jetank.errors import DriverClosedError
+
+# Skip rather than fail collection on machines without the ``hardware`` extra.
+SMBus = pytest.importorskip("smbus2").SMBus
 
 pytestmark = [
     pytest.mark.hardware,
