@@ -15,7 +15,8 @@ Safety rules:
   the tracks: the gripper is not needed to drive or stop safely.
 * Only the driver may jog the arm. Each jog moves a joint one small step, so a joint stops
   soon after the jog messages stop. When the driver disconnects, the arm keeps holding
-  where it is (going limp would let it fall). An arm fault is reported like a gripper
+  where it is (going limp would let it fall); the caller parks it at home on shutdown
+  (:meth:`~jetank.control.arm.ArmController.park`). An arm fault is reported like a gripper
   fault and does not stop the tracks.
 * If the driver goes quiet, the :class:`~jetank.control.drive.DriveController` watchdog stops
   the robot on the next :meth:`~TeleopSession.tick`.

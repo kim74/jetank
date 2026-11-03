@@ -126,8 +126,8 @@ def _cmd_teleop(settings: JetankSettings) -> int:
     def announce(port: int) -> None:
         print(f"remote control at http://{socket.gethostname()}.local:{port}/ (Ctrl-C stops)")
 
-    # Entered in this order so that on exit the motors stop first, then the arm and the
-    # gripper go limp, then the display is blanked.
+    # Entered in this order so that on exit the motors stop first, then the arm parks at
+    # home and goes limp, then the gripper goes limp, then the display is blanked.
     with contextlib.ExitStack() as stack:
         power = stack.enter_context(contextlib.closing(build_power_monitor(settings.power)))
         display = _open_optional_display(settings)
@@ -229,8 +229,8 @@ def _open_optional_servos(
 ) -> tuple[GripperController, ArmController] | None:
     """Gripper and arm for teleop, or ``None`` (with a warning) if the servo bus is unavailable.
 
-    On exit the arm goes limp first (it sags under gravity), then the gripper, then the bus
-    is closed.
+    On exit the arm first moves the joints it holds home and goes limp there, then the gripper
+    goes limp, then the bus is closed.
     """
     try:
         bus = build_servo_bus(settings.servos)
@@ -242,7 +242,7 @@ def _open_optional_servos(
     gripper = GripperController(bus, config.calibration, config.move_time_s, config.max_torque)
     stack.callback(gripper.close)
     arm = ArmController(bus, settings.arm.joints, settings.arm.speed_cps)
-    stack.callback(arm.close)
+    stack.callback(arm.park, time.sleep)
     if settings.servos.backend == "fake":
         logger.warning("teleop uses the FAKE servo bus: gripper and arm will not move")
     return gripper, arm

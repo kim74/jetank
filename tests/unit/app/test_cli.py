@@ -299,7 +299,9 @@ def test_teleop_runs_without_a_servo_bus(
     assert status.arm is None
 
 
-def test_teleop_arm_jogs_and_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_teleop_arm_jogs_then_parks_at_home_after_motors_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from jetank.app import cli
     from jetank.domain.servo import JointName
     from jetank.domain.teleop import ArmJogMessage
@@ -325,9 +327,14 @@ def test_teleop_arm_jogs_and_goes_limp_after_motors_stop(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
     monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    sleeps: list[float] = []
     monkeypatch.setattr(cli.TeleopServer, "serve", serve_and_jog)
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
     assert main(["teleop"]) == 0
-    assert bus.moves[-1].position == 479 + 15  # default jog step, elbow extends
+    jog, park = bus.moves[-2:]
+    assert jog.position == 479 + 15  # default jog step, elbow extends
+    assert (park.position, park.torque_enabled) == (479, True)  # home, still holding
+    assert len(sleeps) == 1  # waited for the park move before going limp
     assert events == ["servo 3 limp, motors closed=True"]
     assert bus.closed
 

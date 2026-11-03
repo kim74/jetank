@@ -15,7 +15,8 @@ Safety rules:
   even when a load holds it back.
 * Only the configured joints' servos are ever touched.
 * :meth:`ArmController.close` switches the torque of every engaged joint off: the arm goes
-  limp and sags under gravity, so callers move it home first when they can.
+  limp and sags under gravity, so callers move it home first when they can, with
+  :meth:`ArmController.park`. Parking moves only engaged joints; a limp joint is left resting.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import TYPE_CHECKING, Final
 from jetank.errors import ConfigurationError, DriverClosedError, ServoError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from types import TracebackType
 
     from jetank.domain.servo import JointCalibration, JointName, ServoState
@@ -40,6 +41,8 @@ MIN_MOVE_S: Final = 0.1
 MAX_MOVE_S: Final = 65.0
 #: Duration used to park the goal at the present position before torque is switched on.
 _PARK_S: Final = 0.1
+#: Extra wait after a park move's nominal time before the joints are released.
+PARK_SETTLE_S: Final = 0.3
 #: How many jog steps a jog target may lead the servo's present position.
 JOG_MAX_LEAD_STEPS: Final = 2
 
@@ -178,6 +181,31 @@ class ArmController:
             (self.move(joint, cal.home_position) for joint, cal in self._joints.items()),
             default=0.0,
         )
+
+    def park(self, sleep: Callable[[float], None]) -> None:
+        """Move every engaged joint home, wait for it, then close (torque off). Idempotent.
+
+        Meant for shutdown: the arm comes to rest in its home pose instead of falling from
+        wherever it was held. Joints that are limp are not touched, so an arm nobody moved
+        does not move. The joints are released even if homing fails or the wait is
+        interrupted (e.g. by a second Ctrl-C).
+
+        Args:
+            sleep: Blocks for the given number of seconds (injected for tests).
+
+        Raises:
+            ServoError: A servo did not answer while homing or releasing.
+        """
+        if self._closed:
+            return
+        try:
+            engaged = sorted(self._engaged, key=lambda j: j.value)
+            if engaged:
+                logger.info("arm: parking %s at home", ", ".join(j.value for j in engaged))
+                duration_s = max(self.move(j, self._joints[j].home_position) for j in engaged)
+                sleep(duration_s + PARK_SETTLE_S)
+        finally:
+            self.close()
 
     def release(self) -> None:
         """Switch the torque of every engaged joint off; the arm goes limp.

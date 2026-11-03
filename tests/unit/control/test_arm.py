@@ -4,8 +4,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from jetank.control.arm import JOG_MAX_LEAD_STEPS, MAX_MOVE_S, MIN_MOVE_S, ArmController
-from jetank.domain.servo import JointCalibration, JointName
+from jetank.control.arm import (
+    JOG_MAX_LEAD_STEPS,
+    MAX_MOVE_S,
+    MIN_MOVE_S,
+    PARK_SETTLE_S,
+    ArmController,
+)
+from jetank.domain.servo import JointCalibration, JointName, ServoState
 from jetank.drivers.fake import FakeServo, FakeServoBus
 from jetank.errors import ConfigurationError, DriverClosedError, ServoError
 
@@ -197,3 +203,98 @@ def test_targets_cover_engaged_joints_until_released(arm: ArmController) -> None
     assert arm.targets[JointName.ELBOW] == 500
     arm.release()
     assert arm.targets == {}
+
+
+class _Sleeps:
+    """Records requested sleeps instead of blocking."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+def test_park_homes_the_engaged_joints_waits_then_goes_limp(
+    arm: ArmController, bus: FakeServoBus
+) -> None:
+    arm.move(JointName.SHOULDER, 500)
+    torque_before = len(bus.torque_log)
+    sleep = _Sleeps()
+    arm.park(sleep)
+    assert bus.moves[-1].position == 870
+    assert bus.moves[-1].torque_enabled  # moved home while still holding
+    assert sleep.calls == [pytest.approx((870 - 500) / SPEED_CPS + PARK_SETTLE_S)]
+    assert bus.torque_log[torque_before:] == [(2, False)]
+    assert not arm.engaged
+
+
+def test_park_leaves_limp_joints_alone(arm: ArmController, bus: FakeServoBus) -> None:
+    arm.move(JointName.SHOULDER, 500)
+    arm.park(_Sleeps())
+    assert all(move.servo_id == 2 for move in bus.moves)
+    assert bus.servos[3].position == 1010  # elbow was never engaged: still resting
+
+
+def test_park_of_an_untouched_arm_sends_nothing_and_does_not_wait(
+    arm: ArmController, bus: FakeServoBus
+) -> None:
+    sleep = _Sleeps()
+    arm.park(sleep)
+    assert sleep.calls == []
+    assert bus.moves == []
+    assert bus.torque_log == []
+    with pytest.raises(DriverClosedError):
+        arm.hold()
+
+
+def test_park_waits_for_the_slowest_joint(arm: ArmController, bus: FakeServoBus) -> None:
+    arm.move(JointName.SHOULDER, 820)  # 50 counts from home
+    arm.move(JointName.ELBOW, 979)  # 500 counts from home
+    sleep = _Sleeps()
+    arm.park(sleep)
+    assert sleep.calls == [pytest.approx(500 / SPEED_CPS + PARK_SETTLE_S)]
+
+
+def test_park_still_goes_limp_when_the_wait_is_interrupted(
+    arm: ArmController, bus: FakeServoBus
+) -> None:
+    arm.move(JointName.ELBOW, 600)
+
+    def interrupted(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        arm.park(interrupted)
+    assert not bus.servos[3].torque_enabled
+    assert not arm.engaged
+
+
+def test_park_still_goes_limp_when_homing_fails(bus: FakeServoBus) -> None:
+    class DeafAfterEngaging(FakeServoBus):
+        deaf = False
+
+        def read_state(self, servo_id: int) -> ServoState:
+            if self.deaf:
+                raise ServoError(f"servo {servo_id} did not answer")
+            return super().read_state(servo_id)
+
+    deaf_bus = DeafAfterEngaging(servos=bus.servos)
+    arm = ArmController(deaf_bus, JOINTS, SPEED_CPS)
+    arm.move(JointName.ELBOW, 600)
+    deaf_bus.deaf = True
+    sleep = _Sleeps()
+    with pytest.raises(ServoError, match="did not answer"):
+        arm.park(sleep)
+    assert sleep.calls == []
+    assert not deaf_bus.servos[3].torque_enabled
+
+
+def test_park_after_close_does_nothing(arm: ArmController, bus: FakeServoBus) -> None:
+    arm.move(JointName.ELBOW, 600)
+    arm.close()
+    moves = len(bus.moves)
+    sleep = _Sleeps()
+    arm.park(sleep)
+    assert len(bus.moves) == moves
+    assert sleep.calls == []
