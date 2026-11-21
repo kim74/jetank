@@ -80,6 +80,15 @@ class VideoStream:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video")
 
     @property
+    def latest_jpeg(self) -> bytes | None:
+        """The newest frame sent to viewers, or ``None`` when nobody watches or it failed.
+
+        Frames are only captured while someone watches, so with no viewer an old frame would
+        be stale; it is dropped instead.
+        """
+        return None if self._failure is not None else self._latest
+
+    @property
     def failed(self) -> bool:
         """True once the camera has failed; the stream does not recover."""
         return self._failure is not None
@@ -148,3 +157,4 @@ class VideoStream:
             self._viewers -= 1
             if self._viewers == 0:
                 self._has_viewers.clear()
+                self._latest = None  # capturing stops, so the last frame goes stale

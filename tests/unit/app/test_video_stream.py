@@ -229,3 +229,20 @@ def test_packaged_page_shows_live_video() -> None:
     assert 'id="video"' in page
     assert "/video" in page
     assert "VIDEO_STALL_MS" in page
+
+
+def test_latest_frame_is_offered_only_while_someone_watches() -> None:
+    camera = FakeCamera(8, 6, SystemClock())
+    video = VideoStream(camera, FPS, frame_number)
+
+    async def body(port: int) -> None:
+        assert video.latest_jpeg is None
+        async with connect(f"ws://127.0.0.1:{port}/video") as viewer:
+            sent = await asyncio.wait_for(viewer.recv(), 5)
+            assert video.latest_jpeg is not None
+            assert video.latest_jpeg >= sent  # the newest frame, possibly newer than received
+        await asyncio.sleep(0.1)  # let the server notice the viewer left
+        assert video.latest_jpeg is None  # capture stopped: an old frame would be stale
+
+    run_with_video(video, body)
+    video.close()

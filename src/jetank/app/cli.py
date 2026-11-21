@@ -14,9 +14,11 @@ import logging
 import socket
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jetank.app.arm_commands import cmd_arm_status, cmd_poses
 from jetank.app.signals import raise_on_termination_signals
 from jetank.app.status_display import (
     close_display_quietly,
@@ -37,8 +39,10 @@ from jetank.control.arm import ArmController
 from jetank.control.drive import DriveController
 from jetank.control.gripper import GripperController
 from jetank.control.status import StatusReporter
+from jetank.control.teaching import GraspTeacher
 from jetank.control.teleop import TeleopSession
 from jetank.domain.status import RobotMode
+from jetank.drivers.grasp_directory import GraspDirectory
 from jetank.drivers.system_clock import SystemClock
 from jetank.drivers.system_host import SystemHostInfo
 from jetank.errors import HardwareError, JetankError
@@ -90,6 +94,16 @@ def _build_parser() -> argparse.ArgumentParser:
     gripper.add_argument(
         "opening", nargs="?", type=float, help="for 'set': 0.0 = closed ... 1.0 = open"
     )
+
+    arm = commands.add_parser("arm", help="read the arm joints and the gripper (moves nothing)")
+    arm.add_argument("action", choices=["status"])
+
+    poses = commands.add_parser(
+        "poses", help="summarise taught grasp records: which animals fit, poses for the config"
+    )
+    poses.add_argument(
+        "--directory", type=Path, help="records directory (default: teach.directory)"
+    )
     return parser
 
 
@@ -136,6 +150,7 @@ def _cmd_teleop(settings: JetankSettings) -> int:
         video = _open_optional_video(settings, clock, stack)
         servos = _open_optional_servos(settings, stack)
         gripper, arm = (None, None) if servos is None else servos
+        teacher = None if arm is None else _teacher(settings, arm, gripper, video)
         motors = stack.enter_context(contextlib.closing(build_motor_driver(settings.motors)))
         drive = stack.enter_context(DriveController(motors, clock, settings.drive))
         stack.enter_context(raise_on_termination_signals())
@@ -146,6 +161,7 @@ def _cmd_teleop(settings: JetankSettings) -> int:
             settings.arm.jog_step,
             clock=clock,
             idle_sleep_s=settings.teleop.idle_sleep_s,
+            teacher=teacher,
         )
         server = TeleopServer(session, settings.teleop, load_page(), video)
         reporter = None if display is None else _status_reporter(settings, display, power)
@@ -255,6 +271,27 @@ def _open_optional_servos(
     return gripper, arm
 
 
+def _teacher(
+    settings: JetankSettings,
+    arm: ArmController,
+    gripper: GripperController | None,
+    video: VideoStream | None,
+) -> GraspTeacher:
+    """Records poses from the teleop page, with the frame the page's video shows."""
+
+    def snapshot() -> bytes | None:
+        return None if video is None else video.latest_jpeg
+
+    return GraspTeacher(
+        arm,
+        gripper,
+        GraspDirectory(settings.teach.directory),
+        snapshot,
+        lambda: datetime.now().astimezone(),
+        settings.gripper.holding_margin,
+    )
+
+
 def _open_optional_video(
     settings: JetankSettings, clock: SystemClock, stack: contextlib.ExitStack
 ) -> VideoStream | None:
@@ -317,6 +354,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_display(settings)
         if args.command == "gripper":
             return _cmd_gripper(settings, args.action, args.opening)
+        if args.command == "arm":
+            return cmd_arm_status(settings)
+        if args.command == "poses":
+            return cmd_poses(settings, args.directory)
         return _cmd_snapshot(settings, args.output, args.warmup)
     except JetankError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -176,3 +176,16 @@ def test_failed_park_is_still_switched_off_on_close() -> None:
         gripper.open()
     gripper.close()
     assert lossy.torque_log == [(4, False)]
+
+
+def test_target_is_the_last_command_while_powered(
+    gripper: GripperController, bus: FakeServoBus
+) -> None:
+    assert gripper.target is None
+    gripper.shut()
+    assert gripper.target == CAL.grip_position
+    gripper.open()
+    assert gripper.target == 745
+    gripper.release()
+    assert gripper.target is None
+    assert gripper.calibration is CAL

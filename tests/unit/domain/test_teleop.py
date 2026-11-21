@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from jetank.domain.models import DriveCommand, TrackSpeeds
-from jetank.domain.servo import JointName
+from jetank.domain.servo import JointName, ServoState
+from jetank.domain.teaching import (
+    GraspRecord,
+    GraspResult,
+    GripperReading,
+    GripPoint,
+    TeachLabels,
+    TeachStage,
+    ToyPosture,
+    record_id_for,
+)
 from jetank.domain.teleop import (
     ArmJogMessage,
     ArmReport,
@@ -14,6 +26,8 @@ from jetank.domain.teleop import (
     Role,
     SleepMessage,
     StopMessage,
+    TeachMessage,
+    TeachReport,
     TeleopStatus,
     parse_client_message,
 )
@@ -47,6 +61,11 @@ def test_parses_stop_message_from_bytes() -> None:
         '{"type": "arm", "joint": "wrist", "direction": 1}',
         '{"type": "arm", "joint": "elbow"}',
         '{"type": "sleep", "seconds": 10}',
+        '{"type": "teach"}',
+        '{"type": "teach", "labels": {"animal": "../x", "stage": "grasp", "posture": "standing",'
+        ' "grip_point": "body", "result": "good"}}',
+        '{"type": "teach", "labels": {"animal": "cow", "stage": "dance", "posture": "standing",'
+        ' "grip_point": "body", "result": "good"}}',
     ],
 )
 def test_rejects_invalid_messages(raw: str) -> None:
@@ -63,6 +82,8 @@ def test_status_serialises_to_json() -> None:
         "speeds": {"left": 0.25, "right": 0.5},
         "gripper": None,
         "arm": None,
+        "teach_enabled": False,
+        "last_teach": None,
         "asleep": False,
         "error": None,
     }
@@ -125,3 +146,46 @@ def test_status_reports_arm_targets_by_joint_name() -> None:
 
 def test_parses_sleep_message() -> None:
     assert parse_client_message('{"type": "sleep"}') == SleepMessage(type="sleep")
+
+
+def test_parses_teach_message() -> None:
+    message = parse_client_message(
+        '{"type": "teach", "labels": {"animal": "Lion", "stage": "pre_grasp",'
+        ' "posture": "on_side", "grip_point": "legs", "result": "shaky",'
+        ' "note": "tail in the way"}}'
+    )
+    assert isinstance(message, TeachMessage)
+    assert message.labels.animal == "lion"
+    assert message.labels.stage is TeachStage.PRE_GRASP
+    assert message.labels.note == "tail in the way"
+
+
+def test_teach_report_summarises_a_record() -> None:
+    moment = datetime(2026, 11, 22, 10, 0, tzinfo=timezone.utc)
+    gripper_state = ServoState(
+        servo_id=4,
+        position=760,
+        voltage_v=5.4,
+        temperature_c=30,
+        moving=False,
+        torque_enabled=True,
+    )
+    record = GraspRecord(
+        record_id=record_id_for(moment),
+        recorded_at=moment,
+        labels=TeachLabels(
+            animal="cow",
+            stage=TeachStage.GRASP,
+            posture=ToyPosture.STANDING,
+            grip_point=GripPoint.BODY,
+            result=GraspResult.GOOD,
+        ),
+        joints={},
+        gripper=GripperReading(servo=gripper_state, target=610, holding=True),
+        image_file="x.jpg",
+    )
+    report = TeachReport.from_record(record)
+    assert report.gripper_position == 760
+    assert report.holding
+    assert report.image_saved
+    assert report.animal == "cow"

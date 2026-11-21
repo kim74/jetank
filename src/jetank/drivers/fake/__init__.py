@@ -3,6 +3,7 @@
 from jetank.drivers.fake.camera import FakeCamera
 from jetank.drivers.fake.clock import FakeClock
 from jetank.drivers.fake.display import FakeDisplay
+from jetank.drivers.fake.grasp_store import FakeGraspStore
 from jetank.drivers.fake.host import FakeHostInfo
 from jetank.drivers.fake.i2c import FakeI2CBus
 from jetank.drivers.fake.motors import FakeMotorDriver
@@ -13,6 +14,7 @@ __all__ = [
     "FakeCamera",
     "FakeClock",
     "FakeDisplay",
+    "FakeGraspStore",
     "FakeHostInfo",
     "FakeI2CBus",
     "FakeMotorDriver",

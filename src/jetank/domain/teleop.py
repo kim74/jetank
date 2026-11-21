@@ -5,7 +5,8 @@ Layer: domain
 
 Client → robot: :class:`DriveMessage` (sent repeatedly while driving, so it doubles as the
 heartbeat that keeps the drive watchdog fed), :class:`StopMessage`, :class:`GripperMessage`,
-:class:`ArmJogMessage` (sent repeatedly while an arm key is held) and :class:`SleepMessage`.
+:class:`ArmJogMessage` (sent repeatedly while an arm key is held), :class:`SleepMessage` and
+:class:`TeachMessage`.
 Robot → client: :class:`TeleopStatus` after every message and on connect.
 """
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 
 from jetank.domain.models import DriveCommand, TrackSpeeds, UnitSpeed
 from jetank.domain.servo import JointName, Opening, ServoPosition
+from jetank.domain.teaching import GraspRecord, GraspResult, RecordId, TeachLabels, TeachStage
 from jetank.errors import ProtocolError
 
 _MESSAGE: Final = ConfigDict(frozen=True, extra="forbid")
@@ -106,9 +108,26 @@ class SleepMessage(BaseModel):
     type: Literal["sleep"]
 
 
-AnyClientMessage = DriveMessage | StopMessage | GripperMessage | ArmJogMessage | SleepMessage
+class TeachMessage(BaseModel):
+    """Request to record the arm's current pose with the operator's labels. Driver only.
+
+    Nothing moves: the robot reads every joint and the gripper, and saves them with the
+    labels and the current camera image.
+    """
+
+    model_config = _MESSAGE
+
+    type: Literal["teach"]
+    labels: TeachLabels
+
+
+AnyClientMessage = (
+    DriveMessage | StopMessage | GripperMessage | ArmJogMessage | SleepMessage | TeachMessage
+)
 ClientMessage = Annotated[
-    Union[DriveMessage, StopMessage, GripperMessage, ArmJogMessage, SleepMessage],  # noqa: UP007
+    Union[  # noqa: UP007
+        DriveMessage, StopMessage, GripperMessage, ArmJogMessage, SleepMessage, TeachMessage
+    ],
     Field(discriminator="type"),
 ]
 
@@ -161,6 +180,41 @@ class ArmReport(BaseModel):
     targets: dict[JointName, ServoPosition] = Field(default_factory=dict)
 
 
+class TeachReport(BaseModel):
+    """Summary of the last pose recorded, shown to the operator as a confirmation.
+
+    Attributes:
+        record_id: ID of the saved record.
+        animal / stage / result: The labels it was saved with.
+        gripper_position: Gripper position measured, or ``None`` without a gripper.
+        holding: Whether the gripper was holding something.
+        image_saved: Whether a camera image was saved with it.
+    """
+
+    model_config = _MESSAGE
+
+    record_id: RecordId
+    animal: str
+    stage: TeachStage
+    result: GraspResult
+    gripper_position: ServoPosition | None = None
+    holding: bool = False
+    image_saved: bool = False
+
+    @classmethod
+    def from_record(cls, record: GraspRecord) -> TeachReport:
+        gripper = record.gripper
+        return cls(
+            record_id=record.record_id,
+            animal=record.labels.animal,
+            stage=record.labels.stage,
+            result=record.labels.result,
+            gripper_position=None if gripper is None else gripper.servo.position,
+            holding=gripper is not None and gripper.holding,
+            image_saved=record.image_file is not None,
+        )
+
+
 class TeleopStatus(BaseModel):
     """Robot state reported to a client.
 
@@ -170,6 +224,8 @@ class TeleopStatus(BaseModel):
         speeds: Track speeds last sent to the motors (after the speed limit).
         gripper: Gripper state, or ``None`` when the robot has no working gripper.
         arm: Arm state, or ``None`` when the robot has no working arm.
+        teach_enabled: Whether poses can be recorded (:class:`TeachMessage`).
+        last_teach: The last pose recorded in this session, if any.
         asleep: Whether the robot was put to sleep (by request or after being idle) and no
             arm or gripper command has woken it since. The arm may still be on its way home.
         error: Why the last message was rejected, if it was.
@@ -183,5 +239,7 @@ class TeleopStatus(BaseModel):
     speeds: TrackSpeeds
     gripper: GripperReport | None = None
     arm: ArmReport | None = None
+    teach_enabled: bool = False
+    last_teach: TeachReport | None = None
     asleep: bool = False
     error: str | None = None

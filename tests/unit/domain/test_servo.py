@@ -5,7 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from jetank.domain.servo import GripperCalibration, ServoState
+from jetank.domain.servo import ArmPose, GripperCalibration, JointName, ServoState
 
 # Opening lowers the position number here (the reverse of the JETANK).
 CAL = GripperCalibration(servo_id=4, open_position=745, closed_position=965)
@@ -120,3 +120,45 @@ def test_joint_clamp() -> None:
 
     joint = JointCalibration(servo_id=1, min_position=460, max_position=983, home_position=875)
     assert (joint.clamp(1022), joint.clamp(300), joint.clamp(700)) == (983, 460, 700)
+
+
+# --- arm poses and holding ---------------------------------------------------------------
+
+
+def test_arm_pose_needs_at_least_one_joint() -> None:
+    with pytest.raises(ValidationError):
+        ArmPose(positions={})
+
+
+def test_arm_pose_positions_are_servo_counts() -> None:
+    with pytest.raises(ValidationError):
+        ArmPose(positions={JointName.BASE: 1024})
+
+
+JETANK_GRIPPER = GripperCalibration(
+    servo_id=4, open_position=955, closed_position=740, grip_overshoot=130
+)
+
+
+@pytest.mark.parametrize(
+    ("position", "target", "holding"),
+    [
+        (655, 610, False),  # closed empty: jaws press, but short of 610 because of the play
+        (689, 610, False),
+        (690, 610, True),  # 80 counts short of the grip position: something between the jaws
+        (800, 610, True),
+        (800, 900, False),  # told to open, not to close
+        (800, None, False),  # limp
+    ],
+)
+def test_gripper_holds_when_closing_stopped_well_short(
+    position: int, target: int | None, holding: bool
+) -> None:
+    assert JETANK_GRIPPER.is_holding(position, target, margin=80) is holding
+
+
+def test_holding_works_for_a_reversed_gripper() -> None:
+    cal = GripperCalibration(servo_id=4, open_position=745, closed_position=965, grip_overshoot=20)
+    assert cal.grip_position == 985
+    assert cal.is_holding(900, 985, margin=80)
+    assert not cal.is_holding(950, 985, margin=80)

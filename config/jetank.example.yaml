@@ -49,6 +49,7 @@ gripper:                  # by hand 2026-10-31: jaws touching ~730, fully open ~
   move_time_s: 0.8        # full stroke; shorter moves take proportionally less
   max_torque: 0.5         # torque cap (fraction of max) applied before torque is switched on
   grip_overshoot: 130     # closing aims 130 past closed (610): jaw play, they press only from ~655
+  holding_margin: 80      # closed but stopped >= 80 short of 610 (>= 690) counts as holding a toy
 
 arm:                      # measured by hand 2026-10-31; joints not listed can never be commanded
   joints:                 # elbow horn re-fitted 2026-10-31 so its whole travel is readable
@@ -58,6 +59,11 @@ arm:                      # measured by hand 2026-10-31; joints not listed can n
     camera_tilt: {servo_id: 5, min_position: 244, max_position: 783, home_position: 535}  # up = low
   speed_cps: 150         # joint speed in servo counts per second
   jog_step: 15           # counts per teleop jog message (one every 100 ms while a key is held)
+  poses: {}              # named poses; `jetank poses` prints them from the taught records, e.g.
+  #  grasp: {positions: {base: 575, shoulder: 700, elbow: 300, camera_tilt: 600}}
+
+teach:                    # poses recorded with the teleop page's Teach panel
+  directory: data/grasps  # JSON + JPEG per pose; the photos show your home, keep them out of git
 
 camera:
   backend: hardware       # IMX219 on CAM0

@@ -64,6 +64,7 @@ class GripperController:
         self._calibration = calibration
         self._move_time_s = move_time_s
         self._engaged = False
+        self._target: int | None = None
         self._closed = False
 
     def __enter__(self) -> GripperController:
@@ -80,6 +81,15 @@ class GripperController:
     @property
     def servo_id(self) -> int:
         return self._calibration.servo_id
+
+    @property
+    def calibration(self) -> GripperCalibration:
+        return self._calibration
+
+    @property
+    def target(self) -> int | None:
+        """Last position commanded while powered, or ``None`` while limp."""
+        return self._target if self._engaged else None
 
     def status(self) -> GripperStatus:
         """Read the gripper without moving it.
@@ -119,6 +129,7 @@ class GripperController:
         if not self._engaged:
             self._engage(present)
         self._bus.move(self.servo_id, target, self._duration(present, target))
+        self._target = target
         logger.info("gripper: %d -> %d (opening %.2f)", present, target, opening)
         return target
 

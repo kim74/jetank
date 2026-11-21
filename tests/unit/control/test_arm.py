@@ -316,3 +316,14 @@ def test_park_after_close_does_nothing(arm: ArmController, bus: FakeServoBus) ->
     arm.park(sleep)
     assert len(bus.moves) == moves
     assert sleep.calls == []
+
+
+def test_read_pose_reads_every_joint_without_moving(arm: ArmController, bus: FakeServoBus) -> None:
+    pose = arm.read_pose()
+    assert {joint: state.position for joint, state in pose.items()} == {
+        JointName.SHOULDER: 880,
+        JointName.ELBOW: 1010,  # read as it is, even outside the limits
+    }
+    assert bus.moves == []
+    assert bus.torque_log == []
+    assert not arm.engaged

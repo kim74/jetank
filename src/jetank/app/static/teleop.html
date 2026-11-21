@@ -71,6 +71,23 @@
   .joints kbd { font: 600 12px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
   .joints .pos { font-variant-numeric: tabular-nums; text-align: right; }
   .joints .held { color: var(--accent); }
+  .teach { display: grid; gap: 10px; border: 1px solid var(--line); }
+  .teach h2 { font-size: 15px; margin: 0; display: flex; justify-content: space-between; }
+  .teach .row { display: grid; grid-template-columns: 6.5em 1fr; gap: 6px 10px; align-items: center; font-size: 14px; }
+  .teach .choices { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .teach .choices label { display: inline-flex; gap: 4px; align-items: center; color: var(--text); }
+  .teach input[type=text], .teach select {
+    font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); min-width: 0;
+  }
+  #teachTake {
+    padding: 12px; font-size: 16px; font-weight: 600; border-radius: 10px; cursor: pointer;
+    border: 0; background: var(--accent); color: #fff;
+  }
+  #teachTake:active { filter: brightness(0.9); }
+  .teach:disabled { opacity: 0.45; }
+  .teach:disabled #teachTake { cursor: default; }
+  #teachLast { font-variant-numeric: tabular-nums; }
   .video { position: relative; padding: 0; overflow: hidden; aspect-ratio: 4 / 3; background: #000; }
   .video img { display: block; width: 100%; height: 100%; object-fit: contain; }
   #videoState {
@@ -130,8 +147,49 @@
       <span id="jointbase">Base</span><span><kbd>F</kbd> left · <kbd>G</kbd> right</span><span id="posbase" class="pos">limp</span>
       <span id="jointshoulder">Shoulder</span><span><kbd>H</kbd> up · <kbd>J</kbd> down</span><span id="posshoulder" class="pos">limp</span>
       <span id="jointelbow">Elbow</span><span><kbd>K</kbd> fold · <kbd>L</kbd> extend</span><span id="poselbow" class="pos">limp</span>
+      <span id="jointcamera_tilt">Camera</span><span><kbd>U</kbd> up · <kbd>N</kbd> down</span><span id="poscamera_tilt" class="pos">limp</span>
     </div>
   </section>
+
+  <fieldset id="teachPanel" class="panel teach" disabled>
+    <h2>Teach <span id="teachState" class="hint">–</span></h2>
+    <div class="row">
+      <span>Animal</span>
+      <input id="teachAnimal" type="text" list="teachAnimals" maxlength="40" placeholder="e.g. lion" autocomplete="off">
+      <span>Stage</span>
+      <span class="choices">
+        <label><input type="radio" name="teachStage" value="search" checked>search</label>
+        <label><input type="radio" name="teachStage" value="pre_grasp">pre-grasp</label>
+        <label><input type="radio" name="teachStage" value="grasp">grasp</label>
+        <label><input type="radio" name="teachStage" value="carry">carry</label>
+        <label><input type="radio" name="teachStage" value="place">place</label>
+      </span>
+      <span>Toy lies</span>
+      <select id="teachPosture">
+        <option value="standing">standing</option>
+        <option value="on_side">on its side</option>
+        <option value="on_back">on its back</option>
+      </select>
+      <span>Gripped at</span>
+      <select id="teachGrip">
+        <option value="body">body</option>
+        <option value="legs">legs</option>
+        <option value="head">head</option>
+        <option value="neck">neck</option>
+      </select>
+      <span>Result</span>
+      <span class="choices">
+        <label><input type="radio" name="teachResult" value="good" checked>good</label>
+        <label><input type="radio" name="teachResult" value="shaky">shaky</label>
+        <label><input type="radio" name="teachResult" value="does_not_fit">doesn't fit</label>
+      </span>
+      <span>Note</span>
+      <input id="teachNote" type="text" maxlength="200" autocomplete="off">
+    </div>
+    <datalist id="teachAnimals"></datalist>
+    <button id="teachTake" type="button">Take pose</button>
+    <p id="teachLast" class="hint">no pose taken yet</p>
+  </fieldset>
 
   <section class="panel tracks">
     <span>Left</span><div class="bar"><span id="barL"></span></div><span id="valL">0.00</span>
@@ -142,7 +200,9 @@
     The robot also stops by itself if this page closes, is hidden, or loses the connection,
     and when the video freezes while it is moving.
     Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.
-    Arm: hold F/G, H/J or K/L to move a joint; it stops when the key is let go and keeps holding its pose.
+    Arm: hold F/G, H/J, K/L or U/N (camera) to move a joint; it stops when the key is let go and keeps holding its pose.
+    Teach: pose the arm and gripper around a toy, fill in the labels and press Take pose; the robot
+    saves the measured joints, the gripper and the camera image. Keys do nothing while you type in a field.
     Sleep (Z) stops the tracks, moves the arm home and lets arm and gripper go limp; the robot
     also does this by itself after a while without arm or gripper commands. Moving the arm or
     gripper wakes it up.</p>
@@ -173,6 +233,8 @@ function connect() {
     setConn("disconnected – retrying", "bad");
     $("role").textContent = "–"; $("moving").textContent = "–";
     $("gripperPanel").disabled = true; $("gripperState").textContent = "–";
+    $("teachPanel").disabled = true; $("teachState").textContent = "–";
+    $("sleep").disabled = true; $("servos").textContent = "–";
     showArm(null, false);
     setTimeout(connect, RECONNECT_MS);
   };
@@ -198,6 +260,20 @@ function showStatus(status) {
   showGripper(status.gripper, driver);
   showArm(status.arm, driver);
   showServos(status, driver);
+  showTeach(status, driver);
+}
+
+function showTeach(status, driver) {
+  $("teachPanel").disabled = !status.teach_enabled || !driver;
+  $("teachState").textContent = !status.teach_enabled ? "not available" : driver ? "" : "driver only";
+  const last = status.last_teach;
+  if (last && last.record_id !== lastTeachId) {
+    lastTeachId = last.record_id;
+    const gripper = last.gripper_position === null ? "no gripper"
+      : `gripper ${last.gripper_position} (${last.holding ? "holding" : "not holding"})`;
+    $("teachLast").textContent = `saved: ${last.animal} · ${last.stage.replace("_", "-")} · `
+      + `${last.result.replaceAll("_", " ")} · ${gripper}${last.image_saved ? " · image" : " · no image"}`;
+  }
 }
 
 function showServos(status, driver) {
@@ -208,7 +284,7 @@ function showServos(status, driver) {
   $("servos").className = powered && !status.asleep ? "warn" : "";
 }
 
-const ARM_JOINTS = ["base", "shoulder", "elbow"];
+const ARM_JOINTS = ["base", "shoulder", "elbow", "camera_tilt"];
 function showArm(arm, driver) {
   armEnabled = !!arm && driver;
   if (!armEnabled) armKeys.clear();
@@ -276,6 +352,39 @@ setInterval(() => {
 }, SEND_PERIOD_MS);
 
 $("stop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
+
+// Teach: labels for the pose the arm is in now. Animal names typed before are offered again
+// (kept in this browser only; storage may be unavailable, e.g. in a private window).
+const ANIMALS_KEY = "jetank.teach.animals";
+let lastTeachId = null;
+function loadAnimals() {
+  try { return JSON.parse(localStorage.getItem(ANIMALS_KEY) || "[]"); } catch { return []; }
+}
+function rememberAnimal(name) {
+  const animals = [...new Set([name, ...loadAnimals()])].slice(0, 50);
+  try { localStorage.setItem(ANIMALS_KEY, JSON.stringify(animals)); } catch { /* not kept */ }
+  showAnimals(animals);
+}
+function showAnimals(animals) {
+  $("teachAnimals").replaceChildren(...animals.map((name) => {
+    const option = document.createElement("option"); option.value = name; return option;
+  }));
+}
+showAnimals(loadAnimals());
+const checked = (name) => document.querySelector(`input[name=${name}]:checked`).value;
+$("teachTake").addEventListener("click", () => {
+  const animal = $("teachAnimal").value.trim().toLowerCase();
+  if (!animal) { setConn("connected – type the animal first", "warn"); $("teachAnimal").focus(); return; }
+  send({
+    type: "teach",
+    labels: {
+      animal, stage: checked("teachStage"), posture: $("teachPosture").value,
+      grip_point: $("teachGrip").value, result: checked("teachResult"), note: $("teachNote").value.trim(),
+    },
+  });
+  rememberAnimal(animal);
+  $("teachNote").value = "";
+});
 function goToSleep() {
   stopAll();
   send({ type: "sleep" });
@@ -329,16 +438,25 @@ const KEY_MAP = {
   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
 };
 const GRIPPER_KEYS = { KeyO: "open", KeyC: "close", KeyR: "release" };
+// Keys by physical position (e.code); these letters sit in the same place on QWERTY and QWERTZ.
 // Directions are the sign of the change in servo counts: on the JETANK base left,
-// shoulder up and elbow folding all lower the number.
+// shoulder up, elbow folding and camera up all lower the number.
 const ARM_KEYS = {
   KeyF: { joint: "base", direction: -1 }, KeyG: { joint: "base", direction: 1 },
   KeyH: { joint: "shoulder", direction: -1 }, KeyJ: { joint: "shoulder", direction: 1 },
   KeyK: { joint: "elbow", direction: -1 }, KeyL: { joint: "elbow", direction: 1 },
+  KeyU: { joint: "camera_tilt", direction: -1 }, KeyN: { joint: "camera_tilt", direction: 1 },
 };
+function typingInField(e) {
+  const t = e.target;
+  return t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName));
+}
 window.addEventListener("keydown", (e) => {
+  if (e.code === "Escape") { stopAll(); if (typingInField(e)) e.target.blur(); return; }
+  if (typingInField(e)) return;  // letters typed into the Teach panel must not drive the robot
   if (e.code === "Space") { e.preventDefault(); stopAll(); return; }
-  if (e.code === "KeyZ" && !e.repeat && !e.ctrlKey && !e.metaKey && !$("sleep").disabled) {
+  // Sleep follows the printed letter, not the key position: Z and Y swap places on QWERTZ.
+  if (e.key.toLowerCase() === "z" && !e.repeat && !e.ctrlKey && !e.metaKey && !$("sleep").disabled) {
     e.preventDefault(); goToSleep(); return;
   }
   if (GRIPPER_KEYS[e.code] && !e.repeat && !$("gripperPanel").disabled) {

@@ -27,6 +27,8 @@ Safety rules:
   command wakes the robot and cancels a release still pending. If the arm cannot move home,
   it keeps holding (rather than falling where it is); the error is reported and the idle
   timer tries again after another ``idle_sleep_s``.
+* Only the driver may record a taught pose (:class:`TeachMessage`). Recording moves nothing;
+  it counts as an arm command, so the robot does not fall asleep while poses are taught.
 """
 
 from __future__ import annotations
@@ -47,14 +49,17 @@ from jetank.domain.teleop import (
     Role,
     SleepMessage,
     StopMessage,
+    TeachMessage,
+    TeachReport,
     TeleopStatus,
 )
-from jetank.errors import ConfigurationError, HardwareError, ProtocolError
+from jetank.errors import ConfigurationError, HardwareError, ProtocolError, StorageError
 
 if TYPE_CHECKING:
     from jetank.control.arm import ArmController
     from jetank.control.drive import DriveController
     from jetank.control.gripper import GripperController
+    from jetank.control.teaching import GraspTeacher
     from jetank.interfaces.clock import Clock
 
 logger = logging.getLogger(__name__)
@@ -74,6 +79,7 @@ class TeleopSession:
         clock: Time source for sleeping (when to release the arm, when it counts as idle).
         idle_sleep_s: Seconds without an arm or gripper command after which powered servos
             are put to sleep; 0 disables the automatic sleep.
+        teacher: Records taught poses, or ``None`` to refuse :class:`TeachMessage`.
 
     Raises:
         ValueError: ``jog_step`` is not positive or ``idle_sleep_s`` is negative.
@@ -88,6 +94,7 @@ class TeleopSession:
         *,
         clock: Clock,
         idle_sleep_s: float = 0.0,
+        teacher: GraspTeacher | None = None,
     ) -> None:
         if jog_step < 1:
             raise ValueError("jog step must be positive")
@@ -98,6 +105,8 @@ class TeleopSession:
         self._last_servo_command_s = clock.monotonic()
         self._arm_release_at_s: float | None = None
         self._asleep = False
+        self._teacher = teacher
+        self._last_teach: TeachReport | None = None
         self._drive = drive
         self._gripper = gripper
         self._arm = arm
@@ -167,6 +176,9 @@ class TeleopSession:
         if isinstance(message, ArmJogMessage):
             self._wake()
             return self.status(client_id, error=self._jog_arm(message))
+        if isinstance(message, TeachMessage):
+            self._wake()
+            return self.status(client_id, error=self._teach(message))
         self._speeds = self._drive.command(message.to_command())
         return self.status(client_id)
 
@@ -216,6 +228,8 @@ class TeleopSession:
             speeds=self._speeds if moving else TrackSpeeds.stopped(),
             gripper=None if self._gripper is None else self._gripper_report,
             arm=None if self._arm is None else ArmReport(targets=dict(self._arm.targets)),
+            teach_enabled=self._teacher is not None,
+            last_teach=self._last_teach,
             asleep=self._asleep,
             error=error,
         )
@@ -251,6 +265,18 @@ class TeleopSession:
         except HardwareError as exc:
             logger.warning("teleop: arm failed: %s", exc)
             return f"arm failed: {exc}"
+        return None
+
+    def _teach(self, message: TeachMessage) -> str | None:
+        """Record the present pose. Returns an error text instead of raising."""
+        if self._teacher is None:
+            return "teaching is not available"
+        try:
+            record = self._teacher.take(message.labels)
+        except (HardwareError, StorageError) as exc:
+            logger.warning("teleop: could not record the pose: %s", exc)
+            return f"pose not recorded: {exc}"
+        self._last_teach = TeachReport.from_record(record)
         return None
 
     def _fall_asleep(self) -> str | None:

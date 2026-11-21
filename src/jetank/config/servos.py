@@ -9,7 +9,13 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, model_validator
 
 from jetank.config.base import SECTION, Backend
-from jetank.domain.servo import MAX_POSITION, GripperCalibration, JointCalibration, JointName
+from jetank.domain.servo import (
+    MAX_POSITION,
+    ArmPose,
+    GripperCalibration,
+    JointCalibration,
+    JointName,
+)
 
 
 class ServosConfig(BaseModel):
@@ -46,6 +52,9 @@ class GripperConfig(BaseModel):
             is switched on. Bounds the squeeze on a held object and the stall current.
         grip_overshoot: Counts past ``closed_position`` that closing aims at, to take up the
             play in the jaw mechanics; see :class:`~jetank.domain.servo.GripperCalibration`.
+        holding_margin: Counts short of the grip position, towards open, at which a closed
+            gripper counts as holding something. Closing empty stops ~45 counts short
+            (jaws press from ~655, the grip position is 610), so this must stay above that.
     """
 
     model_config = SECTION
@@ -57,6 +66,7 @@ class GripperConfig(BaseModel):
     max_torque: float = Field(default=0.5, ge=0.1, le=1.0)
     # Under power the jaws touch at ~670 and press only from ~655 (play); 610 squeezes at the cap.
     grip_overshoot: int = Field(default=130, ge=0, le=200)
+    holding_margin: int = Field(default=80, ge=1, le=400)
 
     @model_validator(mode="after")
     def _valid_calibration(self) -> GripperConfig:
@@ -105,6 +115,8 @@ class ArmConfig(BaseModel):
         speed_cps: Joint speed in servo counts per second (~0.2 degrees per count).
         jog_step: Counts a joint moves per jog message while a teleop key is held. The page
             sends one every 100 ms, so 15 jogs at about 150 counts (~29 degrees) per second.
+        poses: Named arm poses (e.g. ``search``, ``grasp``), taught with the teleop page and
+            summarised by ``jetank poses``. Every position must lie within its joint's limits.
     """
 
     model_config = SECTION
@@ -112,10 +124,25 @@ class ArmConfig(BaseModel):
     joints: dict[JointName, JointCalibration] = Field(default_factory=_default_joints)
     speed_cps: float = Field(default=150.0, gt=0.0, le=1000.0)
     jog_step: int = Field(default=15, ge=1, le=50)
+    poses: dict[str, ArmPose] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _one_servo_per_joint(self) -> ArmConfig:
         ids = [joint.servo_id for joint in self.joints.values()]
         if len(ids) != len(set(ids)):
             raise ValueError("two joints use the same servo ID")
+        return self
+
+    @model_validator(mode="after")
+    def _poses_within_limits(self) -> ArmConfig:
+        for name, pose in self.poses.items():
+            for joint, position in pose.positions.items():
+                cal = self.joints.get(joint)
+                if cal is None:
+                    raise ValueError(f"pose {name!r} moves {joint.value}, which is not calibrated")
+                if cal.clamp(position) != position:
+                    raise ValueError(
+                        f"pose {name!r}: {joint.value} {position} is outside its limits "
+                        f"{cal.min_position}..{cal.max_position}"
+                    )
         return self

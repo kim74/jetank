@@ -112,6 +112,18 @@ class ArmController:
         self._ensure_open()
         return self._bus.read_state(self._calibration(joint).servo_id)
 
+    def read_pose(self) -> dict[JointName, ServoState]:
+        """Read every calibrated joint without moving it.
+
+        Raises:
+            ServoError: A servo did not answer.
+        """
+        self._ensure_open()
+        return {
+            joint: self._bus.read_state(cal.servo_id)
+            for joint, cal in sorted(self._joints.items(), key=lambda item: item[0].value)
+        }
+
     def hold(self) -> None:
         """Switch torque on for every joint where it stands now, without moving it.
 

@@ -91,6 +91,21 @@ class JointCalibration(BaseModel):
         return max(self.min_position, min(self.max_position, position))
 
 
+class ArmPose(BaseModel):
+    """Named arrangement of the arm: a target position for some or all joints.
+
+    Whether the positions are within each joint's limits is checked where the calibration is
+    known (the arm configuration), not here.
+
+    Attributes:
+        positions: Raw position per joint; joints left out are not part of the pose.
+    """
+
+    model_config = _VALUE_OBJECT
+
+    positions: dict[JointName, ServoPosition] = Field(min_length=1)
+
+
 class GripperCalibration(BaseModel):
     """Raw servo positions at the gripper's software limits.
 
@@ -150,6 +165,22 @@ class GripperCalibration(BaseModel):
         """``position`` moved to the nearest limit if it lies outside them."""
         low, high = sorted((self.open_position, self.closed_position))
         return max(low, min(high, position))
+
+    def is_holding(self, position: int, target: int | None, margin: int) -> bool:
+        """Whether the jaws hold something: told to close, but stopped well short of it.
+
+        Closing empty, the jaws still stop a few dozen counts short of the grip position
+        (play in the mechanics), so ``margin`` must be larger than that gap.
+
+        Args:
+            position: Present position in raw counts.
+            target: Last commanded position while powered, ``None`` when limp.
+            margin: Counts short of the grip position, towards open, that count as holding.
+        """
+        if target != self.grip_position:
+            return False
+        towards_open = 1 if self.open_position > self.closed_position else -1
+        return (position - self.grip_position) * towards_open >= margin
 
 
 class GripperStatus(BaseModel):

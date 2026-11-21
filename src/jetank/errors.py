@@ -50,3 +50,7 @@ class ProtocolError(JetankError):
 
 class ServerError(JetankError):
     """A network server could not be started, e.g. its port is already in use."""
+
+
+class StorageError(JetankError):
+    """Data could not be written to or read from disk."""

@@ -5,6 +5,7 @@ from jetank.interfaces.clock import Clock
 from jetank.interfaces.detector import Detector
 from jetank.interfaces.display import Display
 from jetank.interfaces.events import EventSink
+from jetank.interfaces.grasp_store import GraspStore
 from jetank.interfaces.host import HostInfo
 from jetank.interfaces.i2c import I2CBus
 from jetank.interfaces.inference import InferenceEngine
@@ -18,6 +19,7 @@ __all__ = [
     "Detector",
     "Display",
     "EventSink",
+    "GraspStore",
     "HostInfo",
     "I2CBus",
     "InferenceEngine",

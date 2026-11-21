@@ -266,3 +266,33 @@ def test_detector_class_names_can_be_swapped_with_the_model() -> None:
     )
     assert detector.response_for("fox") is Response.CHASE
     assert detector.response_for("cat") is Response.IGNORE
+
+
+def test_arm_poses_load_from_yaml(tmp_path: Path) -> None:
+    from jetank.domain.servo import JointName
+
+    text = "arm:\n  poses:\n    grasp: {positions: {base: 575, shoulder: 700}}\n"
+    poses = load_settings(write(tmp_path, text)).arm.poses
+    assert poses["grasp"].positions == {JointName.BASE: 575, JointName.SHOULDER: 700}
+
+
+def test_arm_pose_outside_a_joint_limit_is_rejected(tmp_path: Path) -> None:
+    text = "arm:\n  poses:\n    grasp: {positions: {shoulder: 100}}\n"
+    with pytest.raises(ConfigurationError, match=r"pose 'grasp': shoulder 100 is outside"):
+        load_settings(write(tmp_path, text))
+
+
+def test_arm_pose_of_an_uncalibrated_joint_is_rejected(tmp_path: Path) -> None:
+    text = (
+        "arm:\n  joints:\n"
+        "    base: {servo_id: 1, min_position: 164, max_position: 940, home_position: 575}\n"
+        "  poses:\n    search: {positions: {elbow: 400}}\n"
+    )
+    with pytest.raises(ConfigurationError, match="elbow, which is not calibrated"):
+        load_settings(write(tmp_path, text))
+
+
+def test_teach_records_go_to_an_ignored_data_directory() -> None:
+    settings = load_settings()
+    assert settings.teach.directory.parts[0] == "data"
+    assert settings.gripper.holding_margin == 80

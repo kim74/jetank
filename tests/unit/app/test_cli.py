@@ -388,3 +388,75 @@ def test_teleop_closes_the_camera_after_the_motors_stop(monkeypatch: pytest.Monk
     monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert events == ["motors closed", "camera closed"]
+
+
+def test_arm_status_reads_every_joint_and_the_gripper(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["arm", "status"]) == 0
+    out = capsys.readouterr().out
+    for name in ("base", "shoulder", "elbow", "camera_tilt", "gripper"):
+        assert name in out
+    assert "limits 164..940" in out
+    assert "torque off" in out
+
+
+def test_poses_without_records_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["poses", "--directory", str(tmp_path / "none")]) == 0
+    assert "no grasp records" in capsys.readouterr().out
+
+
+def test_poses_summarises_fit_and_prints_config_snippet(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import datetime, timezone
+
+    from jetank.domain.servo import JointName, ServoState
+    from jetank.domain.teaching import (
+        GraspRecord,
+        GraspResult,
+        GripPoint,
+        TeachLabels,
+        TeachStage,
+        ToyPosture,
+        record_id_for,
+    )
+    from jetank.drivers.grasp_directory import GraspDirectory
+
+    store = GraspDirectory(tmp_path)
+    for second, (animal, result, base) in enumerate(
+        [
+            ("lion", GraspResult.GOOD, 570),
+            ("lion", GraspResult.GOOD, 580),
+            ("elephant", GraspResult.DOES_NOT_FIT, 300),
+        ]
+    ):
+        moment = datetime(2026, 11, 22, 9, 0, second, tzinfo=timezone.utc)
+        state = ServoState(
+            servo_id=1,
+            position=base,
+            voltage_v=5.4,
+            temperature_c=30,
+            moving=False,
+            torque_enabled=True,
+        )
+        labels = TeachLabels(
+            animal=animal,
+            stage=TeachStage.GRASP,
+            posture=ToyPosture.ON_SIDE,
+            grip_point=GripPoint.LEGS,
+            result=result,
+        )
+        store.save(
+            GraspRecord(
+                record_id=record_id_for(moment),
+                recorded_at=moment,
+                labels=labels,
+                joints={JointName.BASE: state},
+            ),
+            None,
+        )
+    assert main(["poses", "--directory", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "3 grasp records" in out
+    assert "lion      good 2  shaky 0  does_not_fit 0  -> fits (on_side, gripped at legs)" in out
+    assert "elephant  good 0  shaky 0  does_not_fit 1  -> does not fit" in out
+    assert "    grasp: {positions: {base: 575}}  # from 2 records" in out

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
@@ -8,6 +9,7 @@ from jetank.config.settings import DriveConfig
 from jetank.control.arm import PARK_SETTLE_S, ArmController
 from jetank.control.drive import DriveController
 from jetank.control.gripper import GripperController
+from jetank.control.teaching import GraspTeacher
 from jetank.control.teleop import TeleopSession
 from jetank.domain.models import TrackSpeeds
 from jetank.domain.servo import GripperCalibration, JointCalibration, JointName
@@ -22,9 +24,16 @@ from jetank.domain.teleop import (
     Role,
     SleepMessage,
     StopMessage,
+    TeachMessage,
 )
-from jetank.drivers.fake import FakeClock, FakeMotorDriver, FakeServo, FakeServoBus
-from jetank.errors import HardwareError, ProtocolError, ServoError
+from jetank.drivers.fake import (
+    FakeClock,
+    FakeGraspStore,
+    FakeMotorDriver,
+    FakeServo,
+    FakeServoBus,
+)
+from jetank.errors import HardwareError, ProtocolError, ServoError, StorageError
 
 if TYPE_CHECKING:
     from jetank.domain.servo import ServoState
@@ -609,3 +618,93 @@ def test_a_failed_release_is_logged_and_does_not_stop_teleop(
     clock.advance(ONE_STEP_HOME_S + PARK_SETTLE_S + 0.01)
     assert not arm_session.tick()  # no exception: the tracks must keep working
     assert arm_session.handle("a", FORWARD).moving
+
+
+# --- teaching ------------------------------------------------------------------------------
+
+TEACH = TeachMessage.model_validate(
+    {
+        "type": "teach",
+        "labels": {
+            "animal": "cow",
+            "stage": "grasp",
+            "posture": "standing",
+            "grip_point": "body",
+            "result": "good",
+        },
+    }
+)
+
+
+@pytest.fixture
+def teach_store() -> FakeGraspStore:
+    return FakeGraspStore()
+
+
+@pytest.fixture
+def teach_session(
+    motors: FakeMotorDriver,
+    clock: FakeClock,
+    drive_config: DriveConfig,
+    arm_bus: FakeServoBus,
+    teach_store: FakeGraspStore,
+) -> TeleopSession:
+    arm = ArmController(arm_bus, ARM_JOINTS, speed_cps=150.0)
+    moments = iter(datetime(2026, 11, 22, 9, 0, s, tzinfo=timezone.utc) for s in range(60))
+    teacher = GraspTeacher(arm, None, teach_store, lambda: b"jpeg", lambda: next(moments), 80)
+    drive = DriveController(motors, clock, drive_config)
+    return TeleopSession(drive, arm=arm, clock=clock, idle_sleep_s=IDLE_SLEEP_S, teacher=teacher)
+
+
+def test_driver_records_a_pose_and_sees_it_confirmed(
+    teach_session: TeleopSession, teach_store: FakeGraspStore
+) -> None:
+    assert teach_session.connect("a").teach_enabled
+    status = teach_session.handle("a", TEACH)
+    assert status.error is None
+    assert len(teach_store.records) == 1
+    assert status.last_teach is not None
+    assert status.last_teach.record_id == teach_store.records[0].record_id
+    assert status.last_teach.animal == "cow"
+    assert status.last_teach.image_saved
+    assert status.last_teach.gripper_position is None  # this robot has no gripper
+
+
+def test_observer_cannot_record_a_pose(
+    teach_session: TeleopSession, teach_store: FakeGraspStore
+) -> None:
+    teach_session.connect("a")
+    teach_session.connect("b")
+    assert teach_session.handle("b", TEACH).error == "another client is driving"
+    assert teach_store.records == []
+
+
+def test_recording_failures_are_reported(
+    teach_session: TeleopSession, teach_store: FakeGraspStore, arm_bus: FakeServoBus
+) -> None:
+    teach_session.connect("a")
+    teach_store.fail_with = StorageError("disk full")
+    assert teach_session.handle("a", TEACH).error == "pose not recorded: disk full"
+    teach_store.fail_with = None
+    arm_bus.fail_with = ServoError("servo 1 does not answer")
+    status = teach_session.handle("a", TEACH)
+    assert status.error == "pose not recorded: servo 1 does not answer"
+    assert status.last_teach is None
+
+
+def test_teaching_keeps_the_arm_awake(
+    teach_session: TeleopSession, arm_bus: FakeServoBus, clock: FakeClock
+) -> None:
+    teach_session.connect("a")
+    teach_session.handle("a", jog(JointName.SHOULDER, -1))
+    clock.advance(IDLE_SLEEP_S - 1)
+    teach_session.handle("a", TEACH)
+    clock.advance(IDLE_SLEEP_S - 1)
+    teach_session.tick()
+    assert not teach_session.status("a").asleep
+    assert arm_bus.servos[2].position == 855  # still where it was posed
+
+
+def test_without_teacher_poses_are_refused(session: TeleopSession) -> None:
+    assert not session.connect("a").teach_enabled
+    assert session.handle("a", TEACH).error == "teaching is not available"
