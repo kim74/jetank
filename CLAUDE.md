@@ -18,20 +18,45 @@ to drive a **Waveshare JETANK** (tracked chassis + 4-DOF serial-bus-servo arm + 
 
 ### Mission
 
-An autonomous **garden guard**: the JETANK watches the garden, detects intruding animals
-(cats above all) and people, and drives toward animals to chase them off.
+**Current goal (winter 2026/27): the indoor toy tidy-up robot.** The JETANK drives around the house
+on its own, finds small plastic toy animals on the floor (Schleich-style cows, lions, sheep, …),
+picks each one up with the gripper, carries it to a fixed drop-off place marked with a printed
+marker, puts it down and goes looking for the next. Over time it builds and keeps updating a 2D
+map of the house, so later versions can explore and navigate more efficiently. The plan, with
+milestones and open decisions, is in `resources/autonomy-plan.md`.
+
+- **Camera is the only sensor for now.** There are no range sensors, IMU, wheel encoders or bump
+  sensors, and the INA219 is not in the motor current path, so collisions and stalls cannot be
+  sensed. Walls, obstacles and drop-offs ("holes or cliffs") are detected from the camera image.
+  A LiDAR, an IMU and shock/bump sensors may be added later: keep them in mind when designing
+  interfaces (e.g. an obstacle or free-space port that a camera model fills today and a LiDAR
+  later), but don't build for them yet.
+- **The house has one stair.** Until there is a sensor that reliably sees drop-offs, it is kept out
+  by configuration (a no-go marker or zone), and runs are tested in areas where the stair is
+  blocked off. Camera-based edge detection is an extra layer, never the only protection.
+- **Pipeline:** camera → detector (TensorRT on the GPU, a model fine-tuned on the family's toy
+  animals) → tracker → behaviour state machine (explore → approach → grasp and check → deliver →
+  back off → explore; return and stop on limits) → drive and arm.
+- **Toys:** the family's box of toy animals is the training and test set. Most fit the gripper;
+  the large ones (e.g. the elephant) may not, and are reported instead of grasped.
+- **Safety indoors, with kids around:** low speed limits; the gripper's torque cap always applies;
+  approaches and runs are bounded in time, distance, battery and servo temperature; there is a
+  remote stop (the page's STOP), and a missing or failed camera, detector, motor or servo stops the
+  robot (fail-safe). Without collision sensing, speeds stay low enough that bumping into a wall,
+  furniture or a foot is harmless.
+
+**Long-term goal: the garden guard.** In the garden the JETANK watches for intruding animals (cats
+above all) and people, and drives toward animals to chase them off. It reuses the detector,
+tracker, steering, markers, state-machine and safety parts of the tidy-up robot.
 
 - **Day first** with the IMX219; an **infrared camera** (plus IR illuminator) is added later for
   night operation. Camera-specific code stays behind the `Camera` interface so the IR camera is a
   new driver and config entry, not a rewrite. Detection must not assume RGB colour.
-- **Pipeline:** camera → detector (TensorRT on the GPU) → tracker (confirm across frames) →
-  behaviour state machine (watch → confirm → approach → retreat to home → cooldown) → drive.
-- **Safety in the garden:** approaches are bounded in time and distance and always end with a
-  return toward the home position. There is a remote stop. A missing or failed camera, detector or
-  motor stops the robot (fail-safe). People are reported, not chased, unless the config
-  explicitly says otherwise.
-- **Detector and policy are swappable:** the detector model and the target class list are
-  configuration, so a model fine-tuned for IR/night images can be dropped in later.
+- **Safety in the garden:** approaches always end with a return toward the home position. People
+  are reported, not chased, unless the config explicitly says otherwise.
+- **Detector and policy are swappable** (true for both goals): the detector model and the target
+  class list are configuration, so a toy model, a COCO model or a model fine-tuned for IR/night
+  images can be dropped in.
 
 ### Hardware notes (verify before relying on them)
 
@@ -42,6 +67,7 @@ An autonomous **garden guard**: the JETANK watches the garden, detects intruding
 | OLED display     | I2C, SSD1306                       | Optional. **Verified:** 128x32 panel at `0x3C` on `/dev/i2c-7`; default orientation (`0xA1`/`0xC8`) reads correctly, 4 lines x 21 chars. |
 | Battery monitor  | I2C, INA219                        | Optional. Responds at `0x41` on `/dev/i2c-7`; reads battery voltage (~11.9 V, 3S) but is **not** in the motor current path. Driver reads the bus-voltage register only, never writes. |
 | Camera           | CSI, IMX219, GStreamer `nvarguscamerasrc` | **Verified** on CAM0 (`/dev/video0`), 1640x1232@30 → 640x480. Wide-angle module shows a pink cast with default ISP tuning. Never block the control loop on frame capture. |
+| Range / motion sensors | —                            | **None fitted** (no LiDAR, IMU, wheel encoders, bump/shock or cliff sensors). Possible later additions: LiDAR, IMU, shock sensors. |
 
 Bus numbers, addresses and device paths are **configuration, never constants in code** (see
 `config` below). When something here turns out to be wrong on the real robot, update this table.
