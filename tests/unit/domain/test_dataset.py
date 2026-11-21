@@ -14,10 +14,12 @@ from jetank.domain.dataset import (
     Severity,
     Split,
     check_drawing,
+    draft_drawing,
     recording_runs,
     split_scenes,
     yolo_lines,
 )
+from jetank.domain.detection import BoundingBox, Detection
 from jetank.domain.records import record_id_for
 from jetank.domain.scenes import Lighting, SceneLabels, SceneRecord
 
@@ -184,3 +186,20 @@ def test_split_properties(gaps: list[float], fraction: float, block_s: float) ->
 
 def _is_val(block: int, fraction: float) -> bool:
     return math.floor((block + 1) * fraction + 0.5) > math.floor(block * fraction + 0.5)
+
+
+def test_a_draft_boxes_toys_and_outlines_the_floor_in_pixels() -> None:
+    def found(label: str) -> Detection:
+        return Detection(
+            label=label, confidence=0.5, box=BoundingBox(x1=0.25, y1=0.5, x2=0.5, y2=0.75)
+        )
+
+    floor = [(0.0, 480.0), (0.0, 240.0), (640.0, 240.0), (640.0, 480.0)]
+    draft = draft_drawing(
+        ID, [found("toy_animal"), found("cat")], [floor, [(1, 1), (2, 2)]], 640, 480
+    )
+    assert draft.shapes == (
+        DrawnShape(label="toy_animal", kind="rectangle", points=((160, 240), (320, 360))),
+        DrawnShape(label="floor", kind="polygon", points=tuple(floor)),
+    )
+    assert check_drawing(draft, scene()) == []

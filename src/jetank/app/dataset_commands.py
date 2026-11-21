@@ -64,6 +64,8 @@ class DatasetReport(BaseModel):
         images: Images written per split (nothing is written when there are errors).
         outlines: Outlines written per class.
         unlabelled: Scenes without a drawing, left out.
+        unreviewed: Scenes with a draft from ``jetank scenes prelabel`` that was not reviewed
+            yet, left out.
         issues: Errors and warnings, by scene.
     """
 
@@ -72,6 +74,7 @@ class DatasetReport(BaseModel):
     images: dict[Split, int]
     outlines: dict[DatasetClass, int]
     unlabelled: int
+    unreviewed: int = 0
     issues: list[LabelIssue]
 
     @property
@@ -110,16 +113,23 @@ def build_dataset(
         StorageError: Scenes, drawings or the dataset folder cannot be read or written.
     """
     scenes = {record.record_id: record for record in store.load_all()}
-    drawings = labelling.load_drawings()
+    unreviewed = labelling.unreviewed_drafts()
+    drawings = [d for d in labelling.load_drawings() if d.record_id not in unreviewed]
     issues = [
         issue for drawn in drawings for issue in check_drawing(drawn, scenes.get(drawn.record_id))
     ]
-    labelled = {drawn.record_id for drawn in drawings}
+    labelled = {drawn.record_id for drawn in drawings} | unreviewed
     unlabelled = sum(record_id not in labelled for record_id in scenes)
     images = dict.fromkeys(Split, 0)
     outlines = dict.fromkeys(DatasetClass, 0)
     if not drawings or any(issue.severity is Severity.ERROR for issue in issues):
-        return DatasetReport(images=images, outlines=outlines, unlabelled=unlabelled, issues=issues)
+        return DatasetReport(
+            images=images,
+            outlines=outlines,
+            unlabelled=unlabelled,
+            unreviewed=len(unreviewed),
+            issues=issues,
+        )
 
     # All scenes, not only the labelled ones: see split_scenes.
     splits = split_scenes(
@@ -145,7 +155,13 @@ def build_dataset(
         images[split] += 1
         for shape in drawn.shapes:
             outlines[DatasetClass(shape.label)] += 1
-    return DatasetReport(images=images, outlines=outlines, unlabelled=unlabelled, issues=issues)
+    return DatasetReport(
+        images=images,
+        outlines=outlines,
+        unlabelled=unlabelled,
+        unreviewed=len(unreviewed),
+        issues=issues,
+    )
 
 
 def cmd_export_scenes(settings: JetankSettings, scenes: Path | None, to: Path | None) -> int:
@@ -216,5 +232,6 @@ def format_report(report: DatasetReport) -> list[str]:
     return [
         f"{total} images: {report.images[Split.TRAIN]} train, {report.images[Split.VAL]} val",
         "Outlines: " + ", ".join(f"{cls.value} {count}" for cls, count in report.outlines.items()),
-        f"{report.unlabelled} scenes not labelled yet (left out), {warnings} warnings",
+        f"{report.unlabelled} scenes not labelled yet, {report.unreviewed} drafts not reviewed "
+        f"yet (both left out), {warnings} warnings",
     ]

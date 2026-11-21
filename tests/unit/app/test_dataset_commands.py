@@ -9,8 +9,10 @@ import yaml
 
 from jetank.app import dataset_commands
 from jetank.app.cli import main
+from jetank.domain.dataset import DrawnImage, DrawnShape
 from jetank.domain.records import record_id_for
 from jetank.domain.scenes import Lighting, SceneLabels, SceneRecord
+from jetank.drivers.labelling_directory import LabellingDirectory
 from jetank.drivers.scene_directory import SceneDirectory
 
 if TYPE_CHECKING:
@@ -216,3 +218,21 @@ def test_sparse_labels_reach_val_and_keep_their_side_when_labelling_more(
             draw(folders, i, FLOOR, *([TOY] if i < 10 else []))
     assert build(folders) == 0
     assert sparse <= val_stems(folders)
+
+
+def test_build_leaves_out_drafts_nobody_reviewed(
+    folders: dict[str, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    export(folders)
+    draw(folders, 0, FLOOR, TOY)
+    labelling = LabellingDirectory(folders["labelling"])
+    floor = DrawnShape(label="floor", kind="polygon", points=((0, 480), (0, 200), (640, 200)))
+    for i in (1, 2):
+        stem = record_id_for(T0 + timedelta(seconds=2 * i))
+        labelling.save_draft(
+            DrawnImage(record_id=stem, width_px=640, height_px=480, shapes=(floor,))
+        )
+    assert build(folders) == 0
+    out = capsys.readouterr().out
+    assert "1 images" in out
+    assert "27 scenes not labelled yet, 2 drafts not reviewed yet" in out

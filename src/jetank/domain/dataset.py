@@ -30,6 +30,7 @@ from jetank.domain.records import RecordId
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from jetank.domain.detection import Detection
     from jetank.domain.scenes import SceneRecord
 
 _VALUE_OBJECT: Final = ConfigDict(frozen=True, extra="forbid")
@@ -175,6 +176,46 @@ def yolo_lines(drawn: DrawnImage) -> list[str]:
             coordinates.append(_unit(y / drawn.height_px))
         lines.append(" ".join([str(index), *coordinates]))
     return lines
+
+
+def draft_drawing(
+    record_id: str,
+    detections: Iterable[Detection],
+    floor_polygons: Iterable[Sequence[tuple[float, float]]],
+    width_px: int,
+    height_px: int,
+) -> DrawnImage:
+    """A drawing proposed by the model, for the operator to correct in the labelling tool.
+
+    Toy animals become rectangles (the model reports boxes), the floor becomes polygons.
+    Detections of other classes are left out.
+
+    Args:
+        record_id: The scene.
+        detections: What the model found, in normalised frame coordinates.
+        floor_polygons: Outlines of the floor in pixels.
+        width_px / height_px: Image size.
+    """
+    shapes = [
+        DrawnShape(
+            label=DatasetClass.TOY_ANIMAL.value,
+            kind="rectangle",
+            points=(
+                (d.box.x1 * width_px, d.box.y1 * height_px),
+                (d.box.x2 * width_px, d.box.y2 * height_px),
+            ),
+        )
+        for d in detections
+        if d.label == DatasetClass.TOY_ANIMAL.value
+    ]
+    shapes += [
+        DrawnShape(label=DatasetClass.FLOOR.value, kind="polygon", points=tuple(polygon))
+        for polygon in floor_polygons
+        if len(polygon) >= 3
+    ]
+    return DrawnImage(
+        record_id=record_id, width_px=width_px, height_px=height_px, shapes=tuple(shapes)
+    )
 
 
 def _corners(shape: DrawnShape) -> Sequence[tuple[float, float]]:

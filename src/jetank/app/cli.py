@@ -6,22 +6,20 @@ Layer: app
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import json
 import logging
 import sys
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jetank.app.analyze_command import cmd_analyze
 from jetank.app.arm_commands import cmd_arm_status, cmd_poses
+from jetank.app.cli_parser import build_parser
 from jetank.app.dataset_commands import cmd_build_dataset, cmd_export_scenes
-from jetank.app.pose_review import DEFAULT_PORT as REVIEW_PORT
 from jetank.app.pose_review import cmd_review_poses
+from jetank.app.prelabel_command import cmd_prelabel
 from jetank.app.scene_commands import cmd_scenes
-from jetank.app.scene_review import DEFAULT_PORT as SCENE_REVIEW_PORT
 from jetank.app.scene_review import cmd_review_scenes
 from jetank.app.signals import raise_on_termination_signals
 from jetank.app.status_display import (
@@ -42,119 +40,15 @@ from jetank.errors import JetankError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from jetank.config.settings import JetankSettings
     from jetank.domain.models import Frame
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WARMUP_FRAMES = 15
 #: Extra wait after a gripper move's nominal time before its result is read back.
 GRIPPER_SETTLE_S = 0.3
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jetank", description=__doc__)
-    parser.add_argument("--config", type=Path, help="YAML configuration file")
-    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    commands = parser.add_subparsers(dest="command", required=True)
-
-    commands.add_parser("config", help="print the resolved configuration as JSON")
-
-    snapshot = commands.add_parser("snapshot", help="capture one camera frame to an image file")
-    snapshot.add_argument("output", type=Path, help="image path, e.g. frame.jpg")
-    snapshot.add_argument(
-        "--warmup",
-        type=int,
-        default=DEFAULT_WARMUP_FRAMES,
-        help="frames to discard first so auto-exposure can settle (default: %(default)s)",
-    )
-
-    commands.add_parser(
-        "teleop", help="serve a remote-control web page (no authentication: trusted LAN only)"
-    )
-    commands.add_parser(
-        "display", help="show hostname, IP address and battery on the OLED until Ctrl-C"
-    )
-
-    gripper = commands.add_parser(
-        "gripper", help="read the gripper, or move it (then it goes limp again on exit)"
-    )
-    gripper.add_argument("action", choices=["status", "open", "close", "set"])
-    gripper.add_argument(
-        "opening", nargs="?", type=float, help="for 'set': 0.0 = closed ... 1.0 = open"
-    )
-
-    arm = commands.add_parser("arm", help="read the arm joints and the gripper (moves nothing)")
-    arm.add_argument("action", choices=["status"])
-
-    poses = commands.add_parser(
-        "poses",
-        help="taught grasp records: 'summary' prints which animals fit and poses for the config; "
-        "'review' serves a page to look through, relabel and delete them (no robot needed)",
-    )
-    poses.add_argument("action", nargs="?", choices=["summary", "review"], default="summary")
-    poses.add_argument(
-        "--directory", type=Path, help="records directory (default: teach.directory)"
-    )
-    poses.add_argument(
-        "--host",
-        default="0.0.0.0",  # reachable from the LAN on purpose, like teleop
-        help="'review': interface to listen on (default: %(default)s; 127.0.0.1 = this machine)",
-    )
-    poses.add_argument(
-        "--port", type=int, default=REVIEW_PORT, help="'review': TCP port (default: %(default)s)"
-    )
-    scenes = commands.add_parser(
-        "scenes",
-        help="recorded scenes: 'summary' counts them per room, light and with or without toy "
-        "animals; 'review' serves a page to fix their labels and delete them (no robot needed); "
-        "'export' copies the images into the labelling folder",
-    )
-    scenes.add_argument(
-        "action", nargs="?", choices=["summary", "review", "export"], default="summary"
-    )
-    scenes.add_argument(
-        "--directory", type=Path, help="scenes directory (default: scenes.directory)"
-    )
-    scenes.add_argument(
-        "--host",
-        default="0.0.0.0",  # reachable from the LAN on purpose, like teleop
-        help="'review': interface to listen on (default: %(default)s; 127.0.0.1 = this machine)",
-    )
-    scenes.add_argument(
-        "--port",
-        type=int,
-        default=SCENE_REVIEW_PORT,
-        help="'review': TCP port (default: %(default)s)",
-    )
-    scenes.add_argument(
-        "--to", type=Path, help="'export': labelling folder (default: dataset.labelling_directory)"
-    )
-    analyze = commands.add_parser(
-        "analyze",
-        help="run the camera model (detector config) on saved images; moves nothing",
-    )
-    analyze.add_argument("images", nargs="+", type=Path, help="JPEG/PNG files, e.g. scenes")
-    analyze.add_argument(
-        "--output", type=Path, help="write the images with floor and detections drawn here"
-    )
-    dataset = commands.add_parser(
-        "dataset",
-        help="'build': check the outlines drawn on the exported scenes and write the YOLO "
-        "segmentation dataset for training",
-    )
-    dataset.add_argument("action", choices=["build"])
-    dataset.add_argument("--scenes", type=Path, help="scenes directory (default: scenes.directory)")
-    dataset.add_argument(
-        "--labelling",
-        type=Path,
-        help="folder with the drawings (default: dataset.labelling_directory)",
-    )
-    dataset.add_argument(
-        "--to", type=Path, help="dataset folder to write (default: dataset.directory)"
-    )
-    return parser
 
 
 def _cmd_config(settings: JetankSettings) -> int:
@@ -244,7 +138,7 @@ def _write_image(path: Path, frame: Frame) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI. Returns the process exit code."""
-    args = _build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -265,6 +159,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_review_poses(settings, args.directory, args.host, args.port)
         if args.command == "poses":
             return cmd_poses(settings, args.directory)
+        if args.command == "scenes" and args.action == "prelabel":
+            return cmd_prelabel(settings, args.to, args.confidence)
         if args.command == "scenes" and args.action == "export":
             return cmd_export_scenes(settings, args.directory, args.to)
         if args.command == "analyze":

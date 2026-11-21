@@ -8,12 +8,20 @@ what is drawn on ``<name>.jpg`` as ``<name>.json`` next to it. The images are na
 ID, so each drawing can be matched with its scene. ``classes.txt`` lists the class names, one
 per line, for the tool's label list.
 
-The drawn JSON files are the operator's work: this module only ever reads them. Adding an
-image never replaces one that is already there.
+The drawn JSON files are the operator's work: this module never changes one. Adding an image
+never replaces one that is already there, and a draft (a drawing proposed by the model) is only
+written where there is no drawing yet.
+
+A draft is not training data until the operator has looked at it. ``.prelabels.json``
+remembers a fingerprint (SHA-256) of every draft as written: a draft whose file is unchanged
+and not ticked as *checked* in the tool is still unreviewed. Saving a correction, or ticking
+the image's check box, makes it count.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import TYPE_CHECKING, Final
 
@@ -30,6 +38,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CLASSES_FILE: Final = "classes.txt"
+DRAFTS_FILE: Final = ".prelabels.json"
+#: Format version written into drafts: the X-AnyLabeling version the format was checked with.
+LABELME_VERSION: Final = "4.3.3"
 
 
 # The tool's files carry many more fields (flags, imageData, group IDs, ...); only those
@@ -101,6 +112,103 @@ class LabellingDirectory:
             ) from exc
         return True
 
+    def image_ids(self) -> list[str]:
+        """The scene IDs of the images in the folder, in order.
+
+        Raises:
+            StorageError: The folder cannot be listed.
+        """
+        try:
+            return sorted(p.stem for p in self._directory.glob("*.jpg") if is_record_id(p.stem))
+        except OSError as exc:
+            raise StorageError(f"could not list {self._directory}: {exc}") from exc
+
+    def has_drawing(self, record_id: str) -> bool:
+        """Whether something was drawn (or drafted) for this scene."""
+        return (self._directory / f"{record_id}.json").exists()
+
+    def save_draft(self, drawing: DrawnImage) -> bool:
+        """Write a drawing proposed by the model, unless the scene has a drawing already.
+
+        Returns:
+            ``True`` if the draft was written, ``False`` if there was a drawing.
+
+        Raises:
+            StorageError: A file cannot be written.
+        """
+        shapes: list[dict[str, object]] = [
+            {
+                "label": shape.label,
+                "points": [list(point) for point in shape.points],
+                "group_id": None,
+                "description": "",
+                "shape_type": shape.kind,
+                "flags": {},
+            }
+            for shape in drawing.shapes
+        ]
+        content = json.dumps(
+            {
+                "version": LABELME_VERSION,
+                "flags": {},
+                "checked": False,
+                "shapes": shapes,
+                "imagePath": f"{drawing.record_id}.jpg",
+                "imageData": None,
+                "imageHeight": drawing.height_px,
+                "imageWidth": drawing.width_px,
+            },
+            indent=2,
+        ).encode()
+        try:
+            with (self._directory / f"{drawing.record_id}.json").open("xb") as file:
+                file.write(content)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            raise StorageError(f"could not write the draft of {drawing.record_id}: {exc}") from exc
+        drafts = self._drafts()
+        drafts[drawing.record_id] = hashlib.sha256(content).hexdigest()
+        path = self._directory / DRAFTS_FILE
+        try:
+            temporary = path.with_name(f"{path.name}.tmp")
+            temporary.write_text(json.dumps(drafts, indent=1, sort_keys=True), encoding="utf-8")
+            temporary.replace(path)
+        except OSError as exc:
+            raise StorageError(f"could not update {DRAFTS_FILE}: {exc}") from exc
+        return True
+
+    def unreviewed_drafts(self) -> set[str]:
+        """Scenes whose drawing is still the model's draft, untouched and not checked.
+
+        Raises:
+            StorageError: A drawing or the draft list cannot be read.
+        """
+        unreviewed = set()
+        for record_id, fingerprint in self._drafts().items():
+            path = self._directory / f"{record_id}.json"
+            try:
+                content = path.read_bytes()
+            except FileNotFoundError:
+                continue  # deleted in the tool: nothing to train on anyway
+            except OSError as exc:
+                raise StorageError(f"could not read {path.name}: {exc}") from exc
+            if hashlib.sha256(content).hexdigest() == fingerprint:
+                unreviewed.add(record_id)
+        return unreviewed
+
+    def _drafts(self) -> dict[str, str]:
+        path = self._directory / DRAFTS_FILE
+        try:
+            drafts = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            raise StorageError(f"could not read {path}: {exc}") from exc
+        if not isinstance(drafts, dict):
+            raise StorageError(f"{path} is not a list of drafts")
+        return {str(k): str(v) for k, v in drafts.items()}
+
     def load_drawings(self) -> list[DrawnImage]:
         """Every saved drawing, by scene ID. Images without a drawing are not labelled yet.
 
@@ -114,6 +222,8 @@ class LabellingDirectory:
             raise StorageError(f"could not list {self._directory}: {exc}") from exc
         drawings = []
         for path in paths:
+            if path.name.startswith("."):
+                continue  # our own bookkeeping, e.g. the draft list
             if not is_record_id(path.stem):
                 raise StorageError(f"{path.name} is not named after a scene ID")
             try:

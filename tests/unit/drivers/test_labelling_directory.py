@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jetank.domain.dataset import DrawnShape
+from jetank.domain.dataset import DrawnImage, DrawnShape
 from jetank.drivers.labelling_directory import LabellingDirectory
 from jetank.errors import StorageError
 
@@ -104,3 +104,60 @@ def test_unwritable_folder_raises_storage_error(tmp_path: Path) -> None:
         labelling.write_classes(["floor"])
     with pytest.raises(StorageError, match="could not add"):
         labelling.add_image(ID, b"jpeg")
+
+
+DRAFT = DrawnImage(
+    record_id=ID,
+    width_px=640,
+    height_px=480,
+    shapes=(
+        DrawnShape(label="toy_animal", kind="rectangle", points=((40, 250), (100, 300))),
+        DrawnShape(label="floor", kind="polygon", points=((0, 480), (0, 240), (640, 240))),
+    ),
+)
+
+
+def test_a_draft_reads_back_like_a_drawing_and_is_unreviewed(tmp_path: Path) -> None:
+    labelling = LabellingDirectory(tmp_path)
+    labelling.add_image(ID, b"jpeg")
+    assert labelling.image_ids() == [ID]
+    assert not labelling.has_drawing(ID)
+    assert labelling.save_draft(DRAFT)
+    assert labelling.has_drawing(ID)
+    assert labelling.load_drawings() == [DRAFT]  # the draft list itself is not a drawing
+    assert labelling.unreviewed_drafts() == {ID}
+    saved = json.loads((tmp_path / f"{ID}.json").read_text())
+    assert saved["imagePath"] == f"{ID}.jpg"
+    assert saved["checked"] is False
+
+
+def test_a_draft_never_replaces_a_drawing(tmp_path: Path) -> None:
+    (tmp_path / f"{ID}.json").write_text(x_anylabeling_file())
+    labelling = LabellingDirectory(tmp_path)
+    assert not labelling.save_draft(DRAFT)
+    assert json.loads((tmp_path / f"{ID}.json").read_text())["version"] == "2.4.4"
+    assert labelling.unreviewed_drafts() == set()
+
+
+def test_saving_or_checking_or_deleting_a_draft_ends_its_draft_status(tmp_path: Path) -> None:
+    labelling = LabellingDirectory(tmp_path)
+    ids = ["20261121-172308-000001", "20261121-172308-000002", "20261121-172308-000003"]
+    for record_id in ids:
+        labelling.save_draft(DRAFT.model_copy(update={"record_id": record_id}))
+    corrected = json.loads((tmp_path / f"{ids[0]}.json").read_text())
+    corrected["shapes"].pop(0)
+    (tmp_path / f"{ids[0]}.json").write_text(json.dumps(corrected))
+    checked = json.loads((tmp_path / f"{ids[1]}.json").read_text())
+    (tmp_path / f"{ids[1]}.json").write_text(json.dumps({**checked, "checked": True}))
+    assert labelling.unreviewed_drafts() == {ids[2]}  # corrected and checked ones count
+    (tmp_path / f"{ids[2]}.json").unlink()
+    assert labelling.unreviewed_drafts() == set()
+
+
+def test_a_broken_draft_list_is_reported(tmp_path: Path) -> None:
+    (tmp_path / ".prelabels.json").write_text("[1, 2]")
+    with pytest.raises(StorageError, match="not a list of drafts"):
+        LabellingDirectory(tmp_path).unreviewed_drafts()
+    (tmp_path / ".prelabels.json").write_text("{broken")
+    with pytest.raises(StorageError, match="could not read"):
+        LabellingDirectory(tmp_path).unreviewed_drafts()
