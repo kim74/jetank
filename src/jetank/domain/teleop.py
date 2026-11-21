@@ -4,8 +4,8 @@ Messages exchanged with a remote-control (teleop) client over the network.
 Layer: domain
 
 Client → robot: :class:`DriveMessage` (sent repeatedly while driving, so it doubles as the
-heartbeat that keeps the drive watchdog fed), :class:`StopMessage`, :class:`GripperMessage`
-and :class:`ArmJogMessage` (sent repeatedly while an arm key is held).
+heartbeat that keeps the drive watchdog fed), :class:`StopMessage`, :class:`GripperMessage`,
+:class:`ArmJogMessage` (sent repeatedly while an arm key is held) and :class:`SleepMessage`.
 Robot → client: :class:`TeleopStatus` after every message and on connect.
 """
 
@@ -94,9 +94,21 @@ class ArmJogMessage(BaseModel):
     direction: Literal[-1, 1]
 
 
-AnyClientMessage = DriveMessage | StopMessage | GripperMessage | ArmJogMessage
+class SleepMessage(BaseModel):
+    """Request to put the robot to sleep. Accepted from the driver only.
+
+    The tracks stop, the gripper goes limp, and the arm moves home and then goes limp. The
+    next arm or gripper command wakes the robot up again.
+    """
+
+    model_config = _MESSAGE
+
+    type: Literal["sleep"]
+
+
+AnyClientMessage = DriveMessage | StopMessage | GripperMessage | ArmJogMessage | SleepMessage
 ClientMessage = Annotated[
-    Union[DriveMessage, StopMessage, GripperMessage, ArmJogMessage],  # noqa: UP007
+    Union[DriveMessage, StopMessage, GripperMessage, ArmJogMessage, SleepMessage],  # noqa: UP007
     Field(discriminator="type"),
 ]
 
@@ -158,6 +170,8 @@ class TeleopStatus(BaseModel):
         speeds: Track speeds last sent to the motors (after the speed limit).
         gripper: Gripper state, or ``None`` when the robot has no working gripper.
         arm: Arm state, or ``None`` when the robot has no working arm.
+        asleep: Whether the robot was put to sleep (by request or after being idle) and no
+            arm or gripper command has woken it since. The arm may still be on its way home.
         error: Why the last message was rejected, if it was.
     """
 
@@ -169,4 +183,5 @@ class TeleopStatus(BaseModel):
     speeds: TrackSpeeds
     gripper: GripperReport | None = None
     arm: ArmReport | None = None
+    asleep: bool = False
     error: str | None = None

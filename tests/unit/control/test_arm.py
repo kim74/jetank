@@ -215,6 +215,24 @@ class _Sleeps:
         self.calls.append(seconds)
 
 
+def test_rest_homes_the_engaged_joints_and_keeps_holding(
+    arm: ArmController, bus: FakeServoBus
+) -> None:
+    arm.move(JointName.SHOULDER, 500)
+    duration_s = arm.rest()
+    assert duration_s == pytest.approx((870 - 500) / SPEED_CPS)
+    assert bus.moves[-1].position == 870
+    assert bus.servos[2].torque_enabled
+    assert arm.targets == {JointName.SHOULDER: 870}
+    assert all(move.servo_id == 2 for move in bus.moves)  # limp joints are left resting
+
+
+def test_rest_of_an_untouched_arm_sends_nothing(arm: ArmController, bus: FakeServoBus) -> None:
+    assert arm.rest() == 0.0
+    assert bus.moves == []
+    assert bus.torque_log == []
+
+
 def test_park_homes_the_engaged_joints_waits_then_goes_limp(
     arm: ArmController, bus: FakeServoBus
 ) -> None:

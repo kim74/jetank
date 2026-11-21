@@ -36,7 +36,7 @@ class FailingMotors(FakeMotorDriver):
 def make_server(motors: FakeMotorDriver) -> TeleopServer:
     drive_config = DriveConfig(max_speed=0.5, watchdog_timeout_s=WATCHDOG_TIMEOUT_S)
     drive = DriveController(motors, SystemClock(), drive_config)
-    return TeleopServer(TeleopSession(drive), CONFIG, PAGE)
+    return TeleopServer(TeleopSession(drive, clock=SystemClock()), CONFIG, PAGE)
 
 
 def run_with_server(motors: FakeMotorDriver, body: Callable[[int], Awaitable[None]]) -> None:
@@ -203,7 +203,7 @@ def test_port_in_use_raises_server_error() -> None:
     async def body(port: int) -> None:
         taken = TeleopConfig(host="127.0.0.1", port=port, tick_period_s=0.01)
         drive = DriveController(FakeMotorDriver(), SystemClock(), DriveConfig())
-        second = TeleopServer(TeleopSession(drive), taken, PAGE)
+        second = TeleopServer(TeleopSession(drive, clock=SystemClock()), taken, PAGE)
         with pytest.raises(ServerError, match=f"127.0.0.1:{port}"):
             await asyncio.wait_for(second.serve(), 5)
 

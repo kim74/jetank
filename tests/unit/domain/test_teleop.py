@@ -12,6 +12,7 @@ from jetank.domain.teleop import (
     GripperMessage,
     GripperReport,
     Role,
+    SleepMessage,
     StopMessage,
     TeleopStatus,
     parse_client_message,
@@ -45,6 +46,7 @@ def test_parses_stop_message_from_bytes() -> None:
         '{"type": "arm", "joint": "elbow", "direction": 0}',
         '{"type": "arm", "joint": "wrist", "direction": 1}',
         '{"type": "arm", "joint": "elbow"}',
+        '{"type": "sleep", "seconds": 10}',
     ],
 )
 def test_rejects_invalid_messages(raw: str) -> None:
@@ -61,6 +63,7 @@ def test_status_serialises_to_json() -> None:
         "speeds": {"left": 0.25, "right": 0.5},
         "gripper": None,
         "arm": None,
+        "asleep": False,
         "error": None,
     }
 
@@ -118,3 +121,7 @@ def test_status_reports_arm_targets_by_joint_name() -> None:
         arm=ArmReport(targets={JointName.BASE: 575}),
     )
     assert '"arm":{"targets":{"base":575}}' in status.model_dump_json()
+
+
+def test_parses_sleep_message() -> None:
+    assert parse_client_message('{"type": "sleep"}') == SleepMessage(type="sleep")

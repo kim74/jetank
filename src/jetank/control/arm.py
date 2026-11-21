@@ -14,6 +14,8 @@ Safety rules:
   steps ahead of where the servo is now, so the joint stops close by once jogging stops,
   even when a load holds it back.
 * Only the configured joints' servos are ever touched.
+* :meth:`ArmController.rest` moves the engaged joints home and keeps holding, so a caller can
+  let them go limp there later with :meth:`ArmController.release`.
 * :meth:`ArmController.close` switches the torque of every engaged joint off: the arm goes
   limp and sags under gravity, so callers move it home first when they can, with
   :meth:`ArmController.park`. Parking moves only engaged joints; a limp joint is left resting.
@@ -182,6 +184,24 @@ class ArmController:
             default=0.0,
         )
 
+    def rest(self) -> float:
+        """Start moving every engaged joint home and keep holding. Does not wait.
+
+        Limp joints are not touched, so an arm nobody moved does not move. Call
+        :meth:`release` once the moves are done to let the joints go limp at home.
+
+        Returns:
+            Duration of the longest of the moves in seconds; 0.0 if no joint is engaged.
+
+        Raises:
+            ServoError: A servo did not answer or reported a fault.
+        """
+        self._ensure_open()
+        engaged = sorted(self._engaged, key=lambda j: j.value)
+        if engaged:
+            logger.info("arm: moving %s home", ", ".join(j.value for j in engaged))
+        return max((self.move(j, self._joints[j].home_position) for j in engaged), default=0.0)
+
     def park(self, sleep: Callable[[float], None]) -> None:
         """Move every engaged joint home, wait for it, then close (torque off). Idempotent.
 
@@ -199,11 +219,8 @@ class ArmController:
         if self._closed:
             return
         try:
-            engaged = sorted(self._engaged, key=lambda j: j.value)
-            if engaged:
-                logger.info("arm: parking %s at home", ", ".join(j.value for j in engaged))
-                duration_s = max(self.move(j, self._joints[j].home_position) for j in engaged)
-                sleep(duration_s + PARK_SETTLE_S)
+            if self._engaged:
+                sleep(self.rest() + PARK_SETTLE_S)
         finally:
             self.close()
 

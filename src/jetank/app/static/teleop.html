@@ -44,6 +44,12 @@
     color: #fff; background: var(--stop); border: 0; border-radius: 12px; cursor: pointer;
   }
   #stop:active { filter: brightness(0.85); }
+  #sleep {
+    width: 100%; padding: 12px; font-size: 16px; font-weight: 600; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  #sleep:active { filter: brightness(0.9); }
+  #sleep:disabled { opacity: 0.45; cursor: default; }
   label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
   input[type=range] { width: 100%; }
   .tracks { display: grid; grid-template-columns: auto 1fr 3.5em; gap: 6px 10px; align-items: center; font-size: 14px; }
@@ -89,10 +95,12 @@
       <dt>Connection</dt><dd id="conn" class="warn">connecting…</dd>
       <dt>Role</dt><dd id="role">–</dd>
       <dt>Tracks</dt><dd id="moving">–</dd>
+      <dt>Servos</dt><dd id="servos">–</dd>
     </dl>
   </section>
 
   <button id="stop" type="button">STOP</button>
+  <button id="sleep" type="button" disabled>Sleep (Z): arm home, then limp</button>
 
   <section class="panel">
     <div id="pad"><div id="knob"></div></div>
@@ -134,7 +142,10 @@
     The robot also stops by itself if this page closes, is hidden, or loses the connection,
     and when the video freezes while it is moving.
     Gripper: O opens, C closes, R releases (goes limp). Closing the page or losing the connection releases it.
-    Arm: hold F/G, H/J or K/L to move a joint; it stops when the key is let go and keeps holding its pose.</p>
+    Arm: hold F/G, H/J or K/L to move a joint; it stops when the key is let go and keeps holding its pose.
+    Sleep (Z) stops the tracks, moves the arm home and lets arm and gripper go limp; the robot
+    also does this by itself after a while without arm or gripper commands. Moving the arm or
+    gripper wakes it up.</p>
 </main>
 
 <script>
@@ -186,6 +197,15 @@ function showStatus(status) {
   showTrack("R", status.speeds.right);
   showGripper(status.gripper, driver);
   showArm(status.arm, driver);
+  showServos(status, driver);
+}
+
+function showServos(status, driver) {
+  $("sleep").disabled = !driver || (!status.arm && !status.gripper);
+  const powered = (status.gripper && status.gripper.engaged)
+    || (status.arm && Object.keys(status.arm.targets).length > 0);
+  $("servos").textContent = status.asleep ? "asleep" : powered ? "powered" : "limp";
+  $("servos").className = powered && !status.asleep ? "warn" : "";
 }
 
 const ARM_JOINTS = ["base", "shoulder", "elbow"];
@@ -256,6 +276,11 @@ setInterval(() => {
 }, SEND_PERIOD_MS);
 
 $("stop").addEventListener("pointerdown", (e) => { e.preventDefault(); stopAll(); });
+function goToSleep() {
+  stopAll();
+  send({ type: "sleep" });
+}
+$("sleep").addEventListener("click", goToSleep);
 
 // Gripper: buttons send one message each; the slider sends throttled "set" messages.
 const gripper = (action, opening) => send(opening === undefined
@@ -313,6 +338,9 @@ const ARM_KEYS = {
 };
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); stopAll(); return; }
+  if (e.code === "KeyZ" && !e.repeat && !e.ctrlKey && !e.metaKey && !$("sleep").disabled) {
+    e.preventDefault(); goToSleep(); return;
+  }
   if (GRIPPER_KEYS[e.code] && !e.repeat && !$("gripperPanel").disabled) {
     e.preventDefault(); gripper(GRIPPER_KEYS[e.code]); return;
   }

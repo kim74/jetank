@@ -139,7 +139,14 @@ def _cmd_teleop(settings: JetankSettings) -> int:
         motors = stack.enter_context(contextlib.closing(build_motor_driver(settings.motors)))
         drive = stack.enter_context(DriveController(motors, clock, settings.drive))
         stack.enter_context(raise_on_termination_signals())
-        session = TeleopSession(drive, gripper, arm, settings.arm.jog_step)
+        session = TeleopSession(
+            drive,
+            gripper,
+            arm,
+            settings.arm.jog_step,
+            clock=clock,
+            idle_sleep_s=settings.teleop.idle_sleep_s,
+        )
         server = TeleopServer(session, settings.teleop, load_page(), video)
         reporter = None if display is None else _status_reporter(settings, display, power)
         try:

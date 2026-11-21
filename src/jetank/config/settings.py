@@ -133,6 +133,8 @@ class TeleopConfig(BaseModel):
             ``drive.watchdog_timeout_s``.
         video_fps: Upper limit on live-video frames per second sent to the page.
         video_jpeg_quality: JPEG quality of the live video (higher = sharper, more data).
+        idle_sleep_s: Seconds without an arm or gripper command after which the arm moves
+            home and the servos go limp (also after the page has disconnected); 0 disables it.
     """
 
     model_config = _SECTION
@@ -142,6 +144,7 @@ class TeleopConfig(BaseModel):
     tick_period_s: float = Field(default=0.05, gt=0.0, le=1.0)
     video_fps: float = Field(default=15.0, gt=0.0, le=30.0)
     video_jpeg_quality: int = Field(default=70, ge=10, le=95)
+    idle_sleep_s: float = Field(default=120.0, ge=0.0)
 
 
 class DisplayConfig(BaseModel):

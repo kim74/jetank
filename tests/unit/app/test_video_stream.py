@@ -70,7 +70,7 @@ def run_with_video(video: VideoStream | None, body: Callable[[int], Awaitable[No
 
     async def main() -> None:
         drive = DriveController(FakeMotorDriver(), SystemClock(), DriveConfig())
-        server = TeleopServer(TeleopSession(drive), CONFIG, b"page", video)
+        server = TeleopServer(TeleopSession(drive, clock=SystemClock()), CONFIG, b"page", video)
         ready: asyncio.Future[int] = asyncio.get_running_loop().create_future()
         task = asyncio.create_task(server.serve(on_ready=ready.set_result))
         port = await asyncio.wait_for(ready, 5)

@@ -20,6 +20,7 @@ teleop:                   # `jetank teleop`: remote-control page at http://<robo
   tick_period_s: 0.05     # watchdog check period; must be < half of drive.watchdog_timeout_s
   video_fps: 15           # live camera video on the page (uses the camera section)
   video_jpeg_quality: 70
+  idle_sleep_s: 120        # arm goes home and limp after this long without arm/gripper commands; 0 = never
 
 display:                  # SSD1306 OLED: hostname, IP, battery, mode (`jetank display`, teleop)
   backend: hardware
