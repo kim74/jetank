@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jetank.app.arm_commands import cmd_arm_status, cmd_poses
+from jetank.app.pose_review import DEFAULT_PORT as REVIEW_PORT
+from jetank.app.pose_review import cmd_review_poses
 from jetank.app.signals import raise_on_termination_signals
 from jetank.app.status_display import (
     close_display_quietly,
@@ -99,10 +101,21 @@ def _build_parser() -> argparse.ArgumentParser:
     arm.add_argument("action", choices=["status"])
 
     poses = commands.add_parser(
-        "poses", help="summarise taught grasp records: which animals fit, poses for the config"
+        "poses",
+        help="taught grasp records: 'summary' prints which animals fit and poses for the config; "
+        "'review' serves a page to look through, relabel and delete them (no robot needed)",
     )
+    poses.add_argument("action", nargs="?", choices=["summary", "review"], default="summary")
     poses.add_argument(
         "--directory", type=Path, help="records directory (default: teach.directory)"
+    )
+    poses.add_argument(
+        "--host",
+        default="0.0.0.0",  # reachable from the LAN on purpose, like teleop
+        help="'review': interface to listen on (default: %(default)s; 127.0.0.1 = this machine)",
+    )
+    poses.add_argument(
+        "--port", type=int, default=REVIEW_PORT, help="'review': TCP port (default: %(default)s)"
     )
     return parser
 
@@ -356,6 +369,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_gripper(settings, args.action, args.opening)
         if args.command == "arm":
             return cmd_arm_status(settings)
+        if args.command == "poses" and args.action == "review":
+            return cmd_review_poses(settings, args.directory, args.host, args.port)
         if args.command == "poses":
             return cmd_poses(settings, args.directory)
         return _cmd_snapshot(settings, args.output, args.warmup)

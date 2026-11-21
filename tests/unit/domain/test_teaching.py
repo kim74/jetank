@@ -14,6 +14,7 @@ from jetank.domain.teaching import (
     TeachLabels,
     TeachStage,
     ToyPosture,
+    is_record_id,
     median_poses,
     record_id_for,
     summarize_fit,
@@ -89,6 +90,28 @@ def test_record_needs_a_time_zone() -> None:
 def test_record_rejects_an_id_that_could_name_another_file() -> None:
     with pytest.raises(ValidationError):
         GraspRecord(record_id="../x", recorded_at=T0, labels=labels(), joints={})
+
+
+@pytest.mark.parametrize(
+    ("text", "valid"),
+    [
+        ("20261122-103005-123456", True),
+        ("20261122-103005-12345", False),
+        ("20261122-103005-123456.json", False),
+        ("../20261122-103005-123456", False),
+        ("20261122-103005-123456\n", False),
+        ("", False),
+    ],
+)
+def test_record_ids_are_recognised(text: str, valid: bool) -> None:
+    assert is_record_id(text) is valid
+
+
+def test_relabelled_record_keeps_its_measurements() -> None:
+    taken = record(labels(), {JointName.BASE: 575})
+    fixed = taken.relabeled(labels(animal="cow", result=GraspResult.SHAKY))
+    assert fixed.labels == labels(animal="cow", result=GraspResult.SHAKY)
+    assert fixed.model_dump(exclude={"labels"}) == taken.model_dump(exclude={"labels"})
 
 
 def test_record_pose_holds_the_measured_positions() -> None:

@@ -54,3 +54,7 @@ class ServerError(JetankError):
 
 class StorageError(JetankError):
     """Data could not be written to or read from disk."""
+
+
+class RecordNotFoundError(StorageError):
+    """A stored record with the requested ID does not exist."""

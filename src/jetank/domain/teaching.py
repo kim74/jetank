@@ -12,6 +12,7 @@ gripper (:func:`summarize_fit`) and into one pose per stage for the configuratio
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import Counter
 from enum import Enum
@@ -39,8 +40,10 @@ AnimalName = Annotated[
         strip_whitespace=True, to_lower=True, min_length=1, max_length=40, pattern=r"^\w[\w \-]*$"
     ),
 ]
+#: Pattern of a record ID: date, time and microseconds, e.g. ``20261121-131542-538584``.
+RECORD_ID_PATTERN: Final = r"^[0-9]{8}-[0-9]{6}-[0-9]{6}$"
 #: Identifier of a record; also its file name stem, so it is restricted to safe characters.
-RecordId = Annotated[str, StringConstraints(pattern=r"^[0-9]{8}-[0-9]{6}-[0-9]{6}$")]
+RecordId = Annotated[str, StringConstraints(pattern=RECORD_ID_PATTERN)]
 
 
 class TeachStage(str, Enum):
@@ -142,6 +145,15 @@ class GraspRecord(BaseModel):
     def pose(self) -> ArmPose:
         """The measured joint positions as a pose."""
         return ArmPose(positions={joint: state.position for joint, state in self.joints.items()})
+
+    def relabeled(self, labels: TeachLabels) -> GraspRecord:
+        """The same measurements with corrected labels."""
+        return self.model_copy(update={"labels": labels})
+
+
+def is_record_id(text: str) -> bool:
+    """Whether ``text`` is a well-formed record ID (and so safe to use as a file name stem)."""
+    return re.fullmatch(RECORD_ID_PATTERN, text) is not None
 
 
 def record_id_for(moment: datetime) -> str:

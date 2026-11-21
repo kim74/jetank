@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JETANK Pose Review</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #677085; --line: #d8dce4;
+    --accent: #2f6fde; --ok: #1f9d55; --warn: #c27c0e; --stop: #d93025; --field: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13161c; --panel: #1c2028; --text: #e7e9ee; --muted: #9aa3b5; --line: #2e3442;
+      --accent: #5b8ff0; --ok: #3cc47c; --warn: #e3a33b; --stop: #f0554a; --field: #13161c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1400px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  h1 { font-size: 20px; margin: 0; }
+  #count { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  select, input[type=text] {
+    font: inherit; color: var(--text); background: var(--field);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 0;
+  }
+  button {
+    font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--stop); }
+  details summary { cursor: pointer; font-weight: 600; }
+  pre { margin: 10px 0 0; font-size: 13px; overflow-x: auto; white-space: pre; }
+  #grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .card { display: grid; gap: 10px; align-content: start; }
+  .card.dirty { border-color: var(--accent); }
+  .photo { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: var(--bg); }
+  .nophoto { display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+  .title { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .title time { font-weight: 400; color: var(--muted); font-size: 13px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; border: 1px solid currentColor; }
+  .good { color: var(--ok); } .shaky { color: var(--warn); } .does_not_fit { color: var(--stop); }
+  .measured { font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+  .measured .warn { color: var(--warn); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .fields .wide { grid-column: 1 / -1; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .actions .msg { font-size: 13px; color: var(--muted); margin-left: auto; text-align: right; }
+  .actions .msg.bad { color: var(--stop); }
+  #error { color: var(--stop); margin: 0; }
+  #error:empty { display: none; }
+  .empty { color: var(--muted); }
+  @media (max-width: 400px) { .fields { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>JETANK pose review</h1>
+    <span id="count">loading…</span>
+  </header>
+
+  <section class="panel filters" aria-label="Filters">
+    <label>Animal <select id="fAnimal"><option value="">all</option></select></label>
+    <label>Stage <select id="fStage"><option value="">all</option></select></label>
+    <label>Result <select id="fResult"><option value="">all</option></select></label>
+    <label>Gripper
+      <select id="fHolding">
+        <option value="">all</option>
+        <option value="holding">holding</option>
+        <option value="not">not holding</option>
+        <option value="mismatch">good grasp, but not holding</option>
+      </select>
+    </label>
+    <button id="reload" type="button">Reload</button>
+  </section>
+
+  <details class="panel" id="summaryPanel">
+    <summary>Summary: which animals fit, poses for the config</summary>
+    <pre id="summary"></pre>
+  </details>
+
+  <p id="error" role="alert"></p>
+  <section id="grid" aria-label="Records"></section>
+</main>
+
+<datalist id="animals"></datalist>
+
+<script>
+"use strict";
+// Everything shown from a record is put in with textContent, never as HTML.
+const $ = (id) => document.getElementById(id);
+const filters = { animal: $("fAnimal"), stage: $("fStage"), result: $("fResult"), holding: $("fHolding") };
+const LABEL_FIELDS = ["stage", "posture", "grip_point", "result"];
+const JOINTS = ["base", "shoulder", "elbow", "camera_tilt"];
+const NO_ANSWER = "the review server did not answer (is `jetank poses review` still running?)";
+let records = [];
+let choices = {};
+
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  for (const child of children) node.append(child);
+  return node;
+}
+
+const pretty = (value) => String(value).replace(/_/g, " ");
+
+function fillSelect(select, values, keepFirst) {
+  const current = select.value;
+  while (select.options.length > (keepFirst ? 1 : 0)) select.remove(select.options.length - 1);
+  for (const value of values) select.append(el("option", { value, textContent: pretty(value) }));
+  if ([...select.options].some((o) => o.value === current)) select.value = current;
+}
+
+// Reloads everything; with keepCards only the summary, menus and count are refreshed, so
+// unsaved edits on other cards survive a save or delete.
+async function load(keepCards = false) {
+  $("error").textContent = "";
+  try {
+    const response = await fetch("/api/records", { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    const listing = await response.json();
+    records = listing.records;
+    choices = listing.choices;
+    $("summary").textContent = listing.summary.join("\n");
+  } catch (err) {
+    $("error").textContent = `could not load the records: ${err.message}`;
+    return;
+  }
+  const animals = [...new Set(records.map((r) => r.labels.animal))].sort();
+  fillSelect(filters.animal, animals, true);
+  fillSelect(filters.stage, choices.stage, true);
+  fillSelect(filters.result, choices.result, true);
+  $("animals").replaceChildren(...animals.map((a) => el("option", { value: a })));
+  if (keepCards) updateCount(); else render();
+}
+
+function updateCount() {
+  $("count").textContent = `${records.filter(shown).length} of ${records.length} records`;
+}
+
+function isMismatch(record) {
+  return record.labels.stage === "grasp" && record.labels.result === "good"
+    && record.gripper !== null && !record.gripper.holding;
+}
+
+function shown(record) {
+  const l = record.labels;
+  if (filters.animal.value && l.animal !== filters.animal.value) return false;
+  if (filters.stage.value && l.stage !== filters.stage.value) return false;
+  if (filters.result.value && l.result !== filters.result.value) return false;
+  const holding = record.gripper !== null && record.gripper.holding;
+  if (filters.holding.value === "holding" && !holding) return false;
+  if (filters.holding.value === "not" && holding) return false;
+  if (filters.holding.value === "mismatch" && !isMismatch(record)) return false;
+  return true;
+}
+
+function render() {
+  const visible = records.filter(shown);
+  updateCount();
+  $("grid").replaceChildren(
+    ...(visible.length ? visible.map(card) : [el("p", { className: "empty", textContent: "no records match" })])
+  );
+}
+
+function photo(record) {
+  if (!record.image_file) return el("div", { className: "photo nophoto", textContent: "no image" });
+  const src = `/api/records/${encodeURIComponent(record.record_id)}/image`;
+  const img = el("img", { className: "photo", src, loading: "lazy", alt: `${record.labels.animal}, ${pretty(record.labels.stage)}` });
+  return el("a", { href: src, target: "_blank", rel: "noopener", title: "open full size" }, [img]);
+}
+
+function measured(record) {
+  const joints = JOINTS.filter((j) => j in record.joints)
+    .map((j) => `${pretty(j)} ${record.joints[j].position}`).join(" · ");
+  const lines = [el("span", { textContent: joints || "no joints measured" })];
+  const g = record.gripper;
+  if (g === null) {
+    lines.push(el("span", { textContent: "no gripper reading" }));
+  } else {
+    const target = g.target === null ? "limp" : `target ${g.target}`;
+    lines.push(el("span", { textContent: `gripper ${g.servo.position} (${target}) · ${g.holding ? "holding" : "not holding"}` }));
+  }
+  if (isMismatch(record)) {
+    lines.push(el("span", { className: "warn", textContent: "labelled a good grasp, but the gripper did not count it as holding" }));
+  }
+  return el("div", { className: "measured" }, lines);
+}
+
+function field(name, record, label) {
+  const select = el("select", { name });
+  fillSelect(select, choices[name], false);
+  select.value = record.labels[name];
+  return el("label", { textContent: label }, [select]);
+}
+
+function card(record) {
+  const l = record.labels;
+  const when = new Date(record.recorded_at);
+  const animal = el("input", { type: "text", name: "animal", value: l.animal, maxLength: 40, required: true });
+  animal.setAttribute("list", "animals");
+  const note = el("input", { type: "text", name: "note", value: l.note, maxLength: 200 });
+  const form = el("form", { className: "fields" }, [
+    el("label", { textContent: "Animal" }, [animal]),
+    field("stage", record, "Stage"),
+    field("posture", record, "Posture"),
+    field("grip_point", record, "Grip point"),
+    field("result", record, "Result"),
+    el("label", { className: "wide", textContent: "Note" }, [note]),
+  ]);
+  const save = el("button", { type: "button", className: "primary", textContent: "Save", disabled: true });
+  const remove = el("button", { type: "button", className: "danger", textContent: "Delete" });
+  const msg = el("span", { className: "msg" });
+  const node = el("article", { className: "panel card" }, [
+    photo(record),
+    el("div", { className: "title" }, [
+      el("span", {}, [`${l.animal} · ${pretty(l.stage)} `, el("span", { className: `badge ${l.result}`, textContent: pretty(l.result) })]),
+      el("time", { dateTime: record.recorded_at, textContent: when.toLocaleString() }),
+    ]),
+    measured(record),
+    form,
+    el("div", { className: "actions" }, [save, remove, msg]),
+  ]);
+
+  const edited = () => {
+    const labels = { animal: animal.value.trim().toLowerCase(), note: note.value };
+    for (const name of LABEL_FIELDS) labels[name] = form.elements[name].value;
+    return labels;
+  };
+  const changed = () => {
+    const labels = edited();
+    return Object.keys(labels).some((k) => labels[k] !== l[k]);
+  };
+  form.addEventListener("input", () => {
+    const dirty = changed();
+    save.disabled = !dirty;
+    node.classList.toggle("dirty", dirty);
+    msg.textContent = dirty ? "unsaved changes" : "";
+    msg.classList.remove("bad");
+  });
+  form.addEventListener("submit", (e) => { e.preventDefault(); if (!save.disabled) save.click(); });
+
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    msg.textContent = "saving…";
+    const response = await send("PUT", record, edited());
+    if (response === null) { save.disabled = false; return failed(msg, NO_ANSWER); }
+    if (!response.ok) { save.disabled = false; return failed(msg, await response.text()); }
+    const updated = await response.json();
+    node.replaceWith(card(updated));
+    await load(true);
+  });
+
+  remove.addEventListener("click", async () => {
+    const what = `${l.animal} · ${pretty(l.stage)} · ${when.toLocaleString()}`;
+    if (!confirm(`Delete this record?\n\n${what}\n\nIt is moved to the trash folder next to the records.`)) return;
+    remove.disabled = true;
+    const response = await send("DELETE", record);
+    if (response === null || !response.ok) {
+      remove.disabled = false;
+      return failed(msg, response === null ? NO_ANSWER : await response.text());
+    }
+    node.remove();
+    await load(true);
+  });
+  return node;
+}
+
+async function send(method, record, labels) {
+  const init = { method };
+  if (labels !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(labels);
+  }
+  try {
+    return await fetch(`/api/records/${encodeURIComponent(record.record_id)}`, init);
+  } catch (err) {
+    return null;
+  }
+}
+
+function failed(msg, text) {
+  msg.textContent = text;
+  msg.classList.add("bad");
+}
+
+for (const select of Object.values(filters)) select.addEventListener("change", render);
+$("reload").addEventListener("click", () => load());
+load();
+</script>
+</body>
+</html>
