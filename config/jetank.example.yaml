@@ -95,15 +95,20 @@ camera:
   height: 480
   flip_method: 0
 
-detector:
-  backend: tensorrt       # build the engine first: scripts/export_detector.sh yolo11n 640
-  engine_path: models/yolo11n_640_fp16.engine
+detector:                 # the toy + floor model: scripts/train_detector.sh, then
+  backend: tensorrt       #   scripts/export_detector.sh models/toys-seg.pt 640
+  engine_path: models/toys-seg_640_fp16.engine
+  class_names: [toy_animal, floor]  # in the model's class order (see data/dataset/data.yaml)
+  floor_label: floor      # becomes the floor mask, not a detection
   confidence_threshold: 0.4
   nms_iou_threshold: 0.45
-  responses:              # labels not listed are ignored
-    cat: chase
-    dog: chase
-    person: alert         # people are recorded, never chased
+  mask_threshold: 0.5
+  responses: {}           # garden guard only
+# Garden guard with the COCO model instead:
+#   engine_path: models/yolo11n_640_fp16.engine   (scripts/export_detector.sh yolo11n 640)
+#   class_names: (leave out: the 80 COCO classes)
+#   floor_label: null
+#   responses: {cat: chase, dog: chase, person: alert}   # people are recorded, never chased
 
 tracker:
   match_iou_threshold: 0.3

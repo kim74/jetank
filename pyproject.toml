@@ -68,7 +68,7 @@ files = ["src"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["cv2", "cv2.*", "smbus2", "PIL", "PIL.*", "serial", "serial.*"]
+module = ["cv2", "cv2.*", "smbus2", "PIL", "PIL.*", "serial", "serial.*", "tensorrt", "torch", "torch.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

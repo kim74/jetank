@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jetank.app.analyze_command import cmd_analyze
 from jetank.app.arm_commands import cmd_arm_status, cmd_poses
 from jetank.app.dataset_commands import cmd_build_dataset, cmd_export_scenes
 from jetank.app.pose_review import DEFAULT_PORT as REVIEW_PORT
@@ -129,6 +130,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     scenes.add_argument(
         "--to", type=Path, help="'export': labelling folder (default: dataset.labelling_directory)"
+    )
+    analyze = commands.add_parser(
+        "analyze",
+        help="run the camera model (detector config) on saved images; moves nothing",
+    )
+    analyze.add_argument("images", nargs="+", type=Path, help="JPEG/PNG files, e.g. scenes")
+    analyze.add_argument(
+        "--output", type=Path, help="write the images with floor and detections drawn here"
     )
     dataset = commands.add_parser(
         "dataset",
@@ -258,6 +267,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_poses(settings, args.directory)
         if args.command == "scenes" and args.action == "export":
             return cmd_export_scenes(settings, args.directory, args.to)
+        if args.command == "analyze":
+            return cmd_analyze(settings, args.images, args.output)
         if args.command == "dataset":
             return cmd_build_dataset(settings, args.scenes, args.labelling, args.to)
         if args.command == "scenes" and args.action == "review":

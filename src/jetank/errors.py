@@ -58,3 +58,7 @@ class StorageError(JetankError):
 
 class RecordNotFoundError(StorageError):
     """A stored record with the requested ID does not exist."""
+
+
+class InferenceError(HardwareError):
+    """A neural network could not be loaded or run (e.g. missing engine, GPU failure)."""

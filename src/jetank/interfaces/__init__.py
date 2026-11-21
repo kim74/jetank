@@ -1,5 +1,6 @@
 """Protocols that controllers depend on; drivers implement them structurally."""
 
+from jetank.interfaces.analyzer import FrameAnalyzer
 from jetank.interfaces.camera import Camera
 from jetank.interfaces.clock import Clock
 from jetank.interfaces.detector import Detector
@@ -20,6 +21,7 @@ __all__ = [
     "Detector",
     "Display",
     "EventSink",
+    "FrameAnalyzer",
     "GraspStore",
     "HostInfo",
     "I2CBus",

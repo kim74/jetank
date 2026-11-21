@@ -13,10 +13,12 @@ from typing import TYPE_CHECKING
 from jetank.control.drive import DriveController
 from jetank.drivers.fake.camera import FakeCamera
 from jetank.drivers.fake.display import FakeDisplay
+from jetank.drivers.fake.inference import FakeFrameAnalyzer
 from jetank.drivers.fake.motors import FakeMotorDriver
 from jetank.drivers.fake.power import FakePowerMonitor
 from jetank.drivers.fake.servo_bus import FakeServo, FakeServoBus
 from jetank.drivers.system_clock import SystemClock
+from jetank.perception.yolo import YoloSettings
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -24,11 +26,13 @@ if TYPE_CHECKING:
     from jetank.config.servos import ServosConfig
     from jetank.config.settings import (
         CameraConfig,
+        DetectorConfig,
         DisplayConfig,
         JetankSettings,
         MotorsConfig,
         PowerConfig,
     )
+    from jetank.interfaces.analyzer import FrameAnalyzer
     from jetank.interfaces.camera import Camera
     from jetank.interfaces.clock import Clock
     from jetank.interfaces.display import Display
@@ -56,6 +60,31 @@ def build_camera(config: CameraConfig, clock: Clock) -> Camera:
     from jetank.drivers.gst_camera import GstCamera
 
     return GstCamera(config, clock)
+
+
+def yolo_settings(config: DetectorConfig) -> YoloSettings:
+    """How to read the configured model's output."""
+    return YoloSettings(
+        class_names=config.class_names,
+        confidence_threshold=config.confidence_threshold,
+        nms_iou_threshold=config.nms_iou_threshold,
+        mask_threshold=config.mask_threshold,
+        floor_label=config.floor_label,
+    )
+
+
+def build_frame_analyzer(config: DetectorConfig) -> FrameAnalyzer:
+    """Create the camera model selected by ``config.backend`` (``fake`` finds nothing).
+
+    Raises:
+        InferenceError: The engine cannot be loaded.
+    """
+    if config.backend == "fake":
+        return FakeFrameAnalyzer()
+    from jetank.drivers.tensorrt_engine import TensorRtEngine
+    from jetank.perception.analyzer import YoloAnalyzer
+
+    return YoloAnalyzer(TensorRtEngine(config.engine_path), yolo_settings(config))
 
 
 def build_display(config: DisplayConfig) -> Display:

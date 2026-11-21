@@ -227,6 +227,10 @@ class DetectorConfig(BaseModel):
         class_names: Label for each output class index of the model, in order.
         confidence_threshold: Detections below this score are discarded.
         nms_iou_threshold: Overlapping boxes of the same class above this IoU are merged.
+        mask_threshold: For a segmentation model, a mask cell above this (0..1) is part of
+            the object.
+        floor_label: The class of a segmentation model that marks the drivable floor; it is
+            turned into the floor mask instead of detections. ``None``: no floor class.
         responses: What to do about each label; labels not listed are ignored.
     """
 
@@ -237,13 +241,17 @@ class DetectorConfig(BaseModel):
     class_names: tuple[str, ...] = COCO_CLASSES
     confidence_threshold: float = Field(default=0.4, gt=0.0, lt=1.0)
     nms_iou_threshold: float = Field(default=0.45, gt=0.0, lt=1.0)
+    mask_threshold: float = Field(default=0.5, gt=0.0, lt=1.0)
+    floor_label: str | None = None
     responses: dict[str, Response] = Field(default_factory=_default_responses)
 
     @model_validator(mode="after")
-    def _responses_refer_to_known_classes(self) -> DetectorConfig:
+    def _labels_refer_to_known_classes(self) -> DetectorConfig:
         unknown = set(self.responses) - set(self.class_names)
         if unknown:
             raise ValueError(f"responses name labels the model does not know: {sorted(unknown)}")
+        if self.floor_label is not None and self.floor_label not in self.class_names:
+            raise ValueError(f"floor_label {self.floor_label!r} is not one of class_names")
         return self
 
     def response_for(self, label: str) -> Response:
