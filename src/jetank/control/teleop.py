@@ -22,11 +22,9 @@ Safety rules:
   the robot on the next :meth:`~TeleopSession.tick`.
 * Sleep (a :class:`SleepMessage` from the driver, or ``idle_sleep_s`` without an arm or gripper
   command while a servo is powered): the tracks stop (on request only, never when idle), the
-  gripper goes limp, and the arm moves home and goes limp there once the move is done, on a
-  later :meth:`~TeleopSession.tick`, so the server never blocks. The next arm or gripper
-  command wakes the robot and cancels a release still pending. If the arm cannot move home,
-  it keeps holding (rather than falling where it is); the error is reported and the idle
-  timer tries again after another ``idle_sleep_s``.
+  gripper goes limp, and the arm moves home and goes limp there on a later
+  :meth:`~TeleopSession.tick` (:class:`~jetank.control.servo_sleep.ServoSleep`). The next arm
+  or gripper command wakes the robot. An arm that cannot move home keeps holding.
 * Only the driver may record a taught pose (:class:`TeachMessage`). Recording moves nothing;
   it counts as an arm command, so the robot does not fall asleep while poses are taught.
 """
@@ -36,7 +34,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from jetank.control.arm import PARK_SETTLE_S
+from jetank.control.servo_sleep import ServoSleep
 from jetank.domain.models import TrackSpeeds
 from jetank.domain.status import RobotMode
 from jetank.domain.teleop import (
@@ -98,13 +96,7 @@ class TeleopSession:
     ) -> None:
         if jog_step < 1:
             raise ValueError("jog step must be positive")
-        if idle_sleep_s < 0:
-            raise ValueError("idle sleep time must not be negative")
-        self._clock = clock
-        self._idle_sleep_s = idle_sleep_s
-        self._last_servo_command_s = clock.monotonic()
-        self._arm_release_at_s: float | None = None
-        self._asleep = False
+        self._sleep = ServoSleep(arm, clock, idle_sleep_s)
         self._teacher = teacher
         self._last_teach: TeachReport | None = None
         self._drive = drive
@@ -170,14 +162,14 @@ class TeleopSession:
             self._stop()
             return self.status(client_id, error=self._fall_asleep())
         if isinstance(message, GripperMessage):
-            self._wake()
+            self._sleep.wake()
             error = self._operate_gripper(message.action, message.opening)
             return self.status(client_id, error=error)
         if isinstance(message, ArmJogMessage):
-            self._wake()
+            self._sleep.wake()
             return self.status(client_id, error=self._jog_arm(message))
         if isinstance(message, TeachMessage):
-            self._wake()
+            self._sleep.wake()
             return self.status(client_id, error=self._teach(message))
         self._speeds = self._drive.command(message.to_command())
         return self.status(client_id)
@@ -203,18 +195,10 @@ class TeleopSession:
             HardwareError: The motors failed. Servo failures are logged, not raised.
         """
         stopped = self._drive.tick()
-        now_s = self._clock.monotonic()
-        if self._arm_release_at_s is not None:
-            if now_s >= self._arm_release_at_s:
-                self._arm_release_at_s = None
-                self._release_arm()
-        elif (
-            self._idle_sleep_s > 0
-            and self._servos_powered()
-            and now_s - self._last_servo_command_s >= self._idle_sleep_s
-        ):
+        if self._sleep.tick(self._servos_powered()):
             logger.info(
-                "teleop: no arm or gripper command for %.0f s, going to sleep", self._idle_sleep_s
+                "teleop: no arm or gripper command for %.0f s, going to sleep",
+                self._sleep.idle_sleep_s,
             )
             self._fall_asleep()
         return stopped
@@ -230,7 +214,7 @@ class TeleopSession:
             arm=None if self._arm is None else ArmReport(targets=dict(self._arm.targets)),
             teach_enabled=self._teacher is not None,
             last_teach=self._last_teach,
-            asleep=self._asleep,
+            asleep=self._sleep.asleep,
             error=error,
         )
 
@@ -281,34 +265,11 @@ class TeleopSession:
 
     def _fall_asleep(self) -> str | None:
         """Let the gripper go limp and start the arm's way home. Returns an error text."""
-        self._asleep = True
-        self._last_servo_command_s = self._clock.monotonic()  # retry after a failure
-        error = None
+        gripper_error = None
         if self._gripper is not None:  # also when its state is unknown after a failure
-            error = self._operate_gripper(GripperAction.RELEASE, None)
-        if self._arm is None or not self._arm.engaged:
-            return error
-        try:
-            duration_s = self._arm.rest()
-        except HardwareError as exc:
-            # Keep holding: going limp away from home could let the arm fall.
-            logger.warning("teleop: arm could not move home, it keeps holding: %s", exc)
-            return f"arm failed: {exc}"
-        self._arm_release_at_s = self._clock.monotonic() + duration_s + PARK_SETTLE_S
-        return error
-
-    def _wake(self) -> None:
-        """An arm or gripper command arrived: stay awake and keep a pending release from firing."""
-        self._asleep = False
-        self._arm_release_at_s = None
-        self._last_servo_command_s = self._clock.monotonic()
-
-    def _release_arm(self) -> None:
-        assert self._arm is not None  # only called once the arm was engaged
-        try:
-            self._arm.release()
-        except HardwareError as exc:
-            logger.error("teleop: arm could not go limp: %s", exc)
+            gripper_error = self._operate_gripper(GripperAction.RELEASE, None)
+        arm_error = self._sleep.fall_asleep()
+        return arm_error or gripper_error
 
     def _servos_powered(self) -> bool:
         arm_powered = self._arm is not None and self._arm.engaged
