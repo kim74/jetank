@@ -296,3 +296,15 @@ def test_teach_records_go_to_an_ignored_data_directory() -> None:
     settings = load_settings()
     assert settings.teach.directory.parts[0] == "data"
     assert settings.gripper.holding_margin == 80
+
+
+def test_scenes_go_to_an_ignored_data_directory() -> None:
+    scenes = load_settings().scenes
+    assert scenes.directory.parts[0] == "data"
+    assert scenes.auto_limit_s >= scenes.auto_period_s
+
+
+def test_scene_time_limit_must_cover_one_period(tmp_path: Path) -> None:
+    text = "scenes:\n  auto_period_s: 10\n  auto_limit_s: 5\n"
+    with pytest.raises(ConfigurationError, match="auto_limit_s"):
+        load_settings(write(tmp_path, text))

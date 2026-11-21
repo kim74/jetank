@@ -88,6 +88,15 @@
   .teach:disabled { opacity: 0.45; }
   .teach:disabled #teachTake { cursor: default; }
   #teachLast { font-variant-numeric: tabular-nums; }
+  .scenes .buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scenes button {
+    font: inherit; font-size: 14px; font-weight: 600; padding: 10px 6px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  .scenes button:active { filter: brightness(0.9); }
+  .scenes button:disabled { opacity: 0.45; cursor: default; }
+  #sceneAuto.on { background: var(--warn); color: #fff; }
+  #sceneLast { font-variant-numeric: tabular-nums; }
   .video { position: relative; padding: 0; overflow: hidden; aspect-ratio: 4 / 3; background: #000; }
   .video img { display: block; width: 100%; height: 100%; object-fit: contain; }
   #videoState {
@@ -191,6 +200,31 @@
     <p id="teachLast" class="hint">no pose taken yet</p>
   </fieldset>
 
+  <fieldset id="scenesPanel" class="panel teach scenes" disabled>
+    <h2>Scenes <span id="scenesState" class="hint">–</span></h2>
+    <div class="row">
+      <span>Room</span>
+      <input id="sceneRoom" type="text" list="sceneRooms" maxlength="40" placeholder="e.g. kitchen" autocomplete="off">
+      <span>Light</span>
+      <span class="choices">
+        <label><input type="radio" name="sceneLight" value="daylight" checked>daylight</label>
+        <label><input type="radio" name="sceneLight" value="lamp">lamp</label>
+        <label><input type="radio" name="sceneLight" value="dim">dim</label>
+      </span>
+      <span>Animals</span>
+      <span class="choices"><label><input id="sceneAnimals" type="checkbox" checked>animals in view</label></span>
+      <span>Note</span>
+      <input id="sceneNote" type="text" maxlength="200" autocomplete="off">
+    </div>
+    <datalist id="sceneRooms"></datalist>
+    <div class="buttons">
+      <button id="poseSearch" type="button">Search pose</button>
+      <button id="sceneTake" type="button">Take scene (P)</button>
+      <button id="sceneAuto" type="button">Start auto</button>
+    </div>
+    <p id="sceneLast" class="hint">no scene taken yet</p>
+  </fieldset>
+
   <section class="panel tracks">
     <span>Left</span><div class="bar"><span id="barL"></span></div><span id="valL">0.00</span>
     <span>Right</span><div class="bar"><span id="barR"></span></div><span id="valR">0.00</span>
@@ -203,6 +237,10 @@
     Arm: hold F/G, H/J, K/L or U/N (camera) to move a joint; it stops when the key is let go and keeps holding its pose.
     Teach: pose the arm and gripper around a toy, fill in the labels and press Take pose; the robot
     saves the measured joints, the gripper and the camera image. Keys do nothing while you type in a field.
+    Scenes: training images for the toy detector. Press Search pose (the arm moves to the taught
+    search pose), fill in room and light, then Take scene (P) or Start auto, which saves one
+    image every few seconds while you drive, until you stop it or its time limit is reached.
+    Untick "animals in view" for scenes without toy animals (other toys, socks, cables are welcome there). Auto keeps the labels it was started with.
     Sleep (Z) stops the tracks, moves the arm home and lets arm and gripper go limp; the robot
     also does this by itself after a while without arm or gripper commands. Moving the arm or
     gripper wakes it up.</p>
@@ -234,6 +272,7 @@ function connect() {
     $("role").textContent = "–"; $("moving").textContent = "–";
     $("gripperPanel").disabled = true; $("gripperState").textContent = "–";
     $("teachPanel").disabled = true; $("teachState").textContent = "–";
+    $("scenesPanel").disabled = true; $("scenesState").textContent = "–"; scenesAuto = false;
     $("sleep").disabled = true; $("servos").textContent = "–";
     showArm(null, false);
     setTimeout(connect, RECONNECT_MS);
@@ -261,6 +300,7 @@ function showStatus(status) {
   showArm(status.arm, driver);
   showServos(status, driver);
   showTeach(status, driver);
+  showScenes(status, driver);
 }
 
 function showTeach(status, driver) {
@@ -273,6 +313,29 @@ function showTeach(status, driver) {
       : `gripper ${last.gripper_position} (${last.holding ? "holding" : "not holding"})`;
     $("teachLast").textContent = `saved: ${last.animal} · ${last.stage.replace("_", "-")} · `
       + `${last.result.replaceAll("_", " ")} · ${gripper}${last.image_saved ? " · image" : " · no image"}`;
+  }
+}
+
+function showScenes(status, driver) {
+  const scenes = status.scenes;
+  const hasSearch = status.poses.includes("search");
+  $("scenesPanel").disabled = !driver || (!scenes && !hasSearch);
+  $("poseSearch").disabled = !driver || !hasSearch;
+  $("poseSearch").title = hasSearch ? "" : "no 'search' pose under arm.poses in the config";
+  $("sceneTake").disabled = $("sceneAuto").disabled = !driver || !scenes;
+  scenesAuto = !!scenes && scenes.auto;
+  $("sceneAuto").classList.toggle("on", scenesAuto);
+  $("sceneAuto").textContent = scenesAuto
+    ? `Stop auto (${Math.ceil(scenes.auto_remaining_s)} s)` : "Start auto";
+  if (!scenes) {
+    $("scenesState").textContent = driver ? "no camera" : "driver only";
+    return;
+  }
+  $("scenesState").textContent = scenes.error ? scenes.error : driver ? "" : "driver only";
+  $("scenesState").className = scenes.error ? "warn" : "hint";
+  if (scenes.taken > 0) {
+    $("sceneLast").textContent = `${scenes.taken} scene${scenes.taken === 1 ? "" : "s"} this session`
+      + ` · last ${scenes.last_record_id}${scenesAuto ? " · recording…" : ""}`;
   }
 }
 
@@ -385,6 +448,43 @@ $("teachTake").addEventListener("click", () => {
   rememberAnimal(animal);
   $("teachNote").value = "";
 });
+// Scenes: room names typed before are offered again (kept in this browser only).
+const ROOMS_KEY = "jetank.scenes.rooms";
+const SCENE_PING_MS = 1000;   // fresh status while auto recording runs, for the counter
+let scenesAuto = false;
+function loadRooms() {
+  try { return JSON.parse(localStorage.getItem(ROOMS_KEY) || "[]"); } catch { return []; }
+}
+function showRooms(rooms) {
+  $("sceneRooms").replaceChildren(...rooms.map((name) => {
+    const option = document.createElement("option"); option.value = name; return option;
+  }));
+}
+function rememberRoom(name) {
+  const rooms = [...new Set([name, ...loadRooms()])].slice(0, 30);
+  try { localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms)); } catch { /* not kept */ }
+  showRooms(rooms);
+}
+showRooms(loadRooms());
+function sceneLabels() {
+  const room = $("sceneRoom").value.trim().toLowerCase();
+  if (!room) { setConn("connected – type the room first", "warn"); $("sceneRoom").focus(); return null; }
+  rememberRoom(room);
+  return { room, lighting: checked("sceneLight"), has_animals: $("sceneAnimals").checked, note: $("sceneNote").value.trim() };
+}
+function takeScene() {
+  const labels = sceneLabels();
+  if (labels) send({ type: "scene", action: "take", labels });
+}
+$("sceneTake").addEventListener("click", takeScene);
+$("sceneAuto").addEventListener("click", () => {
+  if (scenesAuto) { send({ type: "scene", action: "auto_stop" }); return; }
+  const labels = sceneLabels();
+  if (labels) send({ type: "scene", action: "auto_start", labels });
+});
+$("poseSearch").addEventListener("click", () => send({ type: "pose", name: "search" }));
+setInterval(() => { if (scenesAuto) send({ type: "ping" }); }, SCENE_PING_MS);
+
 function goToSleep() {
   stopAll();
   send({ type: "sleep" });
@@ -458,6 +558,9 @@ window.addEventListener("keydown", (e) => {
   // Sleep follows the printed letter, not the key position: Z and Y swap places on QWERTZ.
   if (e.key.toLowerCase() === "z" && !e.repeat && !e.ctrlKey && !e.metaKey && !$("sleep").disabled) {
     e.preventDefault(); goToSleep(); return;
+  }
+  if (e.code === "KeyP" && !e.repeat && !e.ctrlKey && !e.metaKey && !$("sceneTake").disabled) {
+    e.preventDefault(); takeScene(); return;
   }
   if (GRIPPER_KEYS[e.code] && !e.repeat && !$("gripperPanel").disabled) {
     e.preventDefault(); gripper(GRIPPER_KEYS[e.code]); return;

@@ -11,7 +11,7 @@ from jetank.control.arm import (
     PARK_SETTLE_S,
     ArmController,
 )
-from jetank.domain.servo import JointCalibration, JointName, ServoState
+from jetank.domain.servo import ArmPose, JointCalibration, JointName, ServoState
 from jetank.drivers.fake import FakeServo, FakeServoBus
 from jetank.errors import ConfigurationError, DriverClosedError, ServoError
 
@@ -85,6 +85,23 @@ def test_home_moves_every_joint_home(arm: ArmController, bus: FakeServoBus) -> N
     assert bus.servos[2].position == 870
     assert bus.servos[3].position == 479
     assert longest_s == pytest.approx((1010 - 479) / SPEED_CPS)
+
+
+def test_move_pose_moves_only_the_joints_of_the_pose(arm: ArmController, bus: FakeServoBus) -> None:
+    longest_s = arm.move_pose(ArmPose(positions={JointName.SHOULDER: 724, JointName.ELBOW: 210}))
+    assert bus.servos[2].position == 724
+    assert bus.servos[3].position == 210
+    assert longest_s == pytest.approx((1010 - 210) / SPEED_CPS)
+    assert {move.servo_id for move in bus.moves} == {2, 3}
+
+
+def test_move_pose_with_an_uncalibrated_joint_moves_nothing(
+    arm: ArmController, bus: FakeServoBus
+) -> None:
+    pose = ArmPose(positions={JointName.SHOULDER: 724, JointName.BASE: 575})
+    with pytest.raises(ConfigurationError, match="base"):
+        arm.move_pose(pose)
+    assert bus.moves == []
 
 
 def test_uncalibrated_joint_cannot_be_moved(arm: ArmController) -> None:

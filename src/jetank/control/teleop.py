@@ -8,25 +8,23 @@ and :meth:`~TeleopSession.disconnect` per client, and :meth:`~TeleopSession.tick
 Safety rules:
 
 * Only the first client to connect drives; later clients are observers until it leaves.
-* Any client may stop the robot.
+* Any client may stop the robot (and ask for a fresh status with a ping).
 * The driver disconnecting, or sending a malformed message, stops the robot.
-* Only the driver may operate the gripper. When the driver disconnects, the gripper is
-  released (torque off). A gripper fault is reported to the client but does not stop
-  the tracks: the gripper is not needed to drive or stop safely.
-* Only the driver may jog the arm. Each jog moves a joint one small step, so a joint stops
-  soon after the jog messages stop. When the driver disconnects, the arm keeps holding
-  where it is (going limp would let it fall); the caller parks it at home on shutdown
-  (:meth:`~jetank.control.arm.ArmController.park`). An arm fault is reported like a gripper
-  fault and does not stop the tracks.
+* Only the driver may operate the gripper, jog the arm, move it to a named pose, put the robot
+  to sleep, record a taught pose or record scenes. The servo commands are carried out by
+  :class:`~jetank.control.teleop_servos.TeleopServos`; their faults are reported to the client
+  but never stop the tracks, which are not needed to drive or stop safely.
+* When the driver disconnects, the gripper is released (torque off) and automatic scene
+  recording stops; the arm keeps holding where it is (going limp would let it fall). The
+  caller parks it at home on shutdown (:meth:`~jetank.control.arm.ArmController.park`).
 * If the driver goes quiet, the :class:`~jetank.control.drive.DriveController` watchdog stops
   the robot on the next :meth:`~TeleopSession.tick`.
-* Sleep (a :class:`SleepMessage` from the driver, or ``idle_sleep_s`` without an arm or gripper
-  command while a servo is powered): the tracks stop (on request only, never when idle), the
-  gripper goes limp, and the arm moves home and goes limp there on a later
-  :meth:`~TeleopSession.tick` (:class:`~jetank.control.servo_sleep.ServoSleep`). The next arm
-  or gripper command wakes the robot. An arm that cannot move home keeps holding.
-* Only the driver may record a taught pose (:class:`TeachMessage`). Recording moves nothing;
-  it counts as an arm command, so the robot does not fall asleep while poses are taught.
+* Sleep (a :class:`SleepMessage`, or a time without servo commands) stops the tracks (on
+  request only, never when idle), stops automatic scene recording and lets the servos go limp,
+  the arm after moving home. The next arm or gripper command wakes the robot.
+* Recording a taught pose or scenes moves nothing. It counts as an arm command, as does every
+  automatic scene, so the arm does not fall asleep (and the camera's viewpoint does not
+  change) while poses are taught or scenes recorded. STOP does not end automatic recording.
 """
 
 from __future__ import annotations
@@ -34,16 +32,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from jetank.control.servo_sleep import ServoSleep
+from jetank.control.teleop_servos import TeleopServos
 from jetank.domain.models import TrackSpeeds
 from jetank.domain.status import RobotMode
 from jetank.domain.teleop import (
     AnyClientMessage,
     ArmJogMessage,
-    ArmReport,
-    GripperAction,
+    DriveMessage,
     GripperMessage,
-    GripperReport,
+    PingMessage,
+    PoseMessage,
     Role,
     SleepMessage,
     StopMessage,
@@ -51,13 +49,18 @@ from jetank.domain.teleop import (
     TeachReport,
     TeleopStatus,
 )
-from jetank.errors import ConfigurationError, HardwareError, ProtocolError, StorageError
+from jetank.errors import HardwareError, ProtocolError, StorageError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from jetank.control.arm import ArmController
     from jetank.control.drive import DriveController
     from jetank.control.gripper import GripperController
+    from jetank.control.scene_recording import SceneRecorder
     from jetank.control.teaching import GraspTeacher
+    from jetank.domain.scenes import SceneMessage
+    from jetank.domain.servo import ArmPose
     from jetank.interfaces.clock import Clock
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,9 @@ class TeleopSession:
         idle_sleep_s: Seconds without an arm or gripper command after which powered servos
             are put to sleep; 0 disables the automatic sleep.
         teacher: Records taught poses, or ``None`` to refuse :class:`TeachMessage`.
+        poses: Named arm poses a :class:`PoseMessage` can move to.
+        scenes: Records scenes, or ``None`` to refuse
+            :class:`~jetank.domain.scenes.SceneMessage`.
 
     Raises:
         ValueError: ``jog_step`` is not positive or ``idle_sleep_s`` is negative.
@@ -93,17 +99,16 @@ class TeleopSession:
         clock: Clock,
         idle_sleep_s: float = 0.0,
         teacher: GraspTeacher | None = None,
+        poses: Mapping[str, ArmPose] | None = None,
+        scenes: SceneRecorder | None = None,
     ) -> None:
-        if jog_step < 1:
-            raise ValueError("jog step must be positive")
-        self._sleep = ServoSleep(arm, clock, idle_sleep_s)
+        self._servos = TeleopServos(
+            gripper, arm, jog_step, poses or {}, clock=clock, idle_sleep_s=idle_sleep_s
+        )
         self._teacher = teacher
         self._last_teach: TeachReport | None = None
+        self._scenes = scenes
         self._drive = drive
-        self._gripper = gripper
-        self._arm = arm
-        self._jog_step = jog_step
-        self._gripper_report = GripperReport(engaged=False)
         self._clients: set[str] = set()
         self._driver: str | None = None
         self._speeds = TrackSpeeds.stopped()
@@ -141,9 +146,9 @@ class TeleopSession:
             self._driver = None
             self._stop()
             logger.info("teleop: driver %s disconnected, robot stopped", client_id)
-            if self._gripper is not None:
-                # Also after a failed command, when the gripper's torque state is unknown.
-                self._operate_gripper(GripperAction.RELEASE, None)
+            if self._scenes is not None:
+                self._scenes.stop_auto()
+            self._servos.driver_left()
 
     def handle(self, client_id: str, message: AnyClientMessage) -> TeleopStatus:
         """Apply one message from a client and report the resulting state.
@@ -156,23 +161,14 @@ class TeleopSession:
         if isinstance(message, StopMessage):
             self._stop()
             return self.status(client_id)
+        if isinstance(message, PingMessage):
+            return self.status(client_id)
         if client_id != self._driver:
             return self.status(client_id, error="another client is driving")
-        if isinstance(message, SleepMessage):
-            self._stop()
-            return self.status(client_id, error=self._fall_asleep())
-        if isinstance(message, GripperMessage):
-            self._sleep.wake()
-            error = self._operate_gripper(message.action, message.opening)
-            return self.status(client_id, error=error)
-        if isinstance(message, ArmJogMessage):
-            self._sleep.wake()
-            return self.status(client_id, error=self._jog_arm(message))
-        if isinstance(message, TeachMessage):
-            self._sleep.wake()
-            return self.status(client_id, error=self._teach(message))
-        self._speeds = self._drive.command(message.to_command())
-        return self.status(client_id)
+        if isinstance(message, DriveMessage):
+            self._speeds = self._drive.command(message.to_command())
+            return self.status(client_id)
+        return self.status(client_id, error=self._handle_driver_request(message))
 
     def reject(self, client_id: str, error: str) -> TeleopStatus:
         """Report an unusable message. If it came from the driver, stop to be safe.
@@ -195,12 +191,11 @@ class TeleopSession:
             HardwareError: The motors failed. Servo failures are logged, not raised.
         """
         stopped = self._drive.tick()
-        if self._sleep.tick(self._servos_powered()):
-            logger.info(
-                "teleop: no arm or gripper command for %.0f s, going to sleep",
-                self._sleep.idle_sleep_s,
-            )
-            self._fall_asleep()
+        if self._scenes is not None:
+            self._scenes.tick()
+            if self._scenes.auto:
+                self._servos.wake()  # keep the camera where it is while scenes are recorded
+        self._servos.tick()
         return stopped
 
     def status(self, client_id: str, error: str | None = None) -> TeleopStatus:
@@ -210,46 +205,43 @@ class TeleopSession:
             role=Role.DRIVER if client_id == self._driver else Role.OBSERVER,
             moving=moving,
             speeds=self._speeds if moving else TrackSpeeds.stopped(),
-            gripper=None if self._gripper is None else self._gripper_report,
-            arm=None if self._arm is None else ArmReport(targets=dict(self._arm.targets)),
+            gripper=self._servos.gripper_report(),
+            arm=self._servos.arm_report(),
+            poses=self._servos.pose_names(),
             teach_enabled=self._teacher is not None,
             last_teach=self._last_teach,
-            asleep=self._sleep.asleep,
+            scenes=None if self._scenes is None else self._scenes.report(),
+            asleep=self._servos.asleep,
             error=error,
         )
 
-    def _operate_gripper(self, action: GripperAction, opening: float | None) -> str | None:
-        """Carry out a gripper action. Returns an error text instead of raising."""
-        if self._gripper is None:
-            return "this robot has no gripper"
-        try:
-            if action is GripperAction.RELEASE:
-                self._gripper.release()
-                self._gripper_report = GripperReport(engaged=False)
-                return None
-            target = {GripperAction.OPEN: 1.0, GripperAction.CLOSE: 0.0}.get(action, opening)
-            assert target is not None  # GripperMessage guarantees an opening with SET
-            self._gripper.set_opening(target)
-        except HardwareError as exc:
-            logger.warning("teleop: gripper failed: %s", exc)
-            # Its state is unknown now; report it as limp and let the next command retry.
-            self._gripper_report = GripperReport(engaged=False)
-            return f"gripper failed: {exc}"
-        self._gripper_report = GripperReport(engaged=True, opening=target)
-        return None
-
-    def _jog_arm(self, message: ArmJogMessage) -> str | None:
-        """Move one joint a step. Returns an error text instead of raising."""
-        if self._arm is None:
-            return "this robot has no arm"
-        try:
-            self._arm.jog(message.joint, message.direction * self._jog_step)
-        except ConfigurationError as exc:
-            return str(exc)
-        except HardwareError as exc:
-            logger.warning("teleop: arm failed: %s", exc)
-            return f"arm failed: {exc}"
-        return None
+    def _handle_driver_request(
+        self,
+        message: GripperMessage
+        | ArmJogMessage
+        | PoseMessage
+        | SleepMessage
+        | TeachMessage
+        | SceneMessage,
+    ) -> str | None:
+        """Carry out a driver's servo or recording request. Returns an error text."""
+        if isinstance(message, SleepMessage):
+            self._stop()
+            if self._scenes is not None:
+                self._scenes.stop_auto()
+            return self._servos.fall_asleep()
+        if isinstance(message, GripperMessage):
+            return self._servos.operate_gripper(message.action, message.opening)
+        if isinstance(message, ArmJogMessage):
+            return self._servos.jog(message.joint, message.direction)
+        if isinstance(message, PoseMessage):
+            return self._servos.move_pose(message.name)
+        self._servos.wake()
+        if isinstance(message, TeachMessage):
+            return self._teach(message)
+        if self._scenes is None:
+            return "scene recording is not available"
+        return self._scenes.handle(message)
 
     def _teach(self, message: TeachMessage) -> str | None:
         """Record the present pose. Returns an error text instead of raising."""
@@ -262,18 +254,6 @@ class TeleopSession:
             return f"pose not recorded: {exc}"
         self._last_teach = TeachReport.from_record(record)
         return None
-
-    def _fall_asleep(self) -> str | None:
-        """Let the gripper go limp and start the arm's way home. Returns an error text."""
-        gripper_error = None
-        if self._gripper is not None:  # also when its state is unknown after a failure
-            gripper_error = self._operate_gripper(GripperAction.RELEASE, None)
-        arm_error = self._sleep.fall_asleep()
-        return arm_error or gripper_error
-
-    def _servos_powered(self) -> bool:
-        arm_powered = self._arm is not None and self._arm.engaged
-        return arm_powered or self._gripper_report.engaged
 
     def _stop(self) -> None:
         self._drive.stop()

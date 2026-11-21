@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jetank.app import pose_review
+from jetank.app import review_server
 from jetank.app.cli import main
-from jetank.app.pose_review import PoseReviewApi, load_page, make_server
+from jetank.app.pose_review import PoseReviewApi, load_page
+from jetank.app.review_server import make_server
 from jetank.domain.servo import JointName, ServoState
 from jetank.domain.teaching import (
     GraspRecord,
@@ -246,7 +247,7 @@ def test_server_reviews_records_on_disk(served: tuple[GraspDirectory, int]) -> N
 
 def test_server_refuses_oversized_or_bad_bodies(served: tuple[GraspDirectory, int]) -> None:
     _, port = served
-    big = b"x" * (pose_review.MAX_BODY_BYTES + 1)
+    big = b"x" * (review_server.MAX_BODY_BYTES + 1)
     assert request(port, "PUT", "/api/records/x", big)[0] == 400
     assert request(port, "PUT", "/api/records/x", None, {"Content-Length": "lots"})[0] == 400
     assert request(port, "POST", "/api/records")[0] == 501
@@ -274,7 +275,7 @@ def test_cli_review_serves_until_interrupted(
     def interrupted(self: object, poll_interval: float = 0.5) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(pose_review.HTTPServer, "serve_forever", interrupted)
+    monkeypatch.setattr(review_server.HTTPServer, "serve_forever", interrupted)
     args = ["poses", "review", "--directory", str(tmp_path), "--host", "127.0.0.1", "--port", "0"]
     assert main(args) == 0
     assert "pose review at http://" in capsys.readouterr().out

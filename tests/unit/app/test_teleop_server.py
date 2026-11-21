@@ -208,3 +208,11 @@ def test_port_in_use_raises_server_error() -> None:
             await asyncio.wait_for(second.serve(), 5)
 
     run_with_server(FakeMotorDriver(), body)
+
+
+def test_packaged_page_has_scene_controls() -> None:
+    page = load_page().decode()
+    for element in ('id="scenesPanel"', 'id="sceneTake"', 'id="sceneAuto"', 'id="poseSearch"'):
+        assert element in page
+    for message in ('type: "scene"', 'type: "pose"', 'type: "ping"', '"KeyP"'):
+        assert message in page

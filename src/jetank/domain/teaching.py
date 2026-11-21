@@ -12,19 +12,22 @@ gripper (:func:`summarize_fit`) and into one pose per stage for the configuratio
 
 from __future__ import annotations
 
-import re
 import statistics
 from collections import Counter
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Final, TypeVar
+from typing import TYPE_CHECKING, Final, TypeVar
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field
 
+from jetank.domain.records import RECORD_ID_PATTERN as RECORD_ID_PATTERN  # re-exported
+from jetank.domain.records import ImageRecord, LabelName
+from jetank.domain.records import RecordId as RecordId  # re-exported
+from jetank.domain.records import is_record_id as is_record_id  # re-exported
+from jetank.domain.records import record_id_for as record_id_for  # re-exported
 from jetank.domain.servo import ArmPose, JointName, ServoPosition, ServoState
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from datetime import datetime
 
 _T = TypeVar("_T")
 
@@ -33,17 +36,8 @@ _VALUE_OBJECT: Final = ConfigDict(frozen=True, extra="forbid")
 #: Longest note an operator can attach to a record.
 MAX_NOTE_LENGTH: Final = 200
 
-#: Name of a toy, e.g. "lion" or "löwe": letters, digits, spaces, "-" and "_", lower case.
-AnimalName = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True, to_lower=True, min_length=1, max_length=40, pattern=r"^\w[\w \-]*$"
-    ),
-]
-#: Pattern of a record ID: date, time and microseconds, e.g. ``20261121-131542-538584``.
-RECORD_ID_PATTERN: Final = r"^[0-9]{8}-[0-9]{6}-[0-9]{6}$"
-#: Identifier of a record; also its file name stem, so it is restricted to safe characters.
-RecordId = Annotated[str, StringConstraints(pattern=RECORD_ID_PATTERN)]
+#: Name of a toy, e.g. "lion" or "löwe".
+AnimalName = LabelName
 
 
 class TeachStage(str, Enum):
@@ -120,26 +114,18 @@ class GripperReading(BaseModel):
     holding: bool
 
 
-class GraspRecord(BaseModel):
+class GraspRecord(ImageRecord):
     """One taught pose: the operator's labels and what the robot measured.
 
-    Attributes:
-        record_id: Unique ID, derived from the time the pose was taken.
-        recorded_at: Wall-clock time the pose was taken, with time zone.
+    Attributes (besides those of :class:`~jetank.domain.records.ImageRecord`):
         labels: What the operator said about it.
         joints: Live reading of every calibrated arm joint.
         gripper: Gripper reading, or ``None`` when the robot has no gripper.
-        image_file: Name of the camera image saved with the record, if there was one.
     """
 
-    model_config = _VALUE_OBJECT
-
-    record_id: RecordId
-    recorded_at: AwareDatetime
     labels: TeachLabels
     joints: dict[JointName, ServoState]
     gripper: GripperReading | None = None
-    image_file: str | None = None
 
     @property
     def pose(self) -> ArmPose:
@@ -149,16 +135,6 @@ class GraspRecord(BaseModel):
     def relabeled(self, labels: TeachLabels) -> GraspRecord:
         """The same measurements with corrected labels."""
         return self.model_copy(update={"labels": labels})
-
-
-def is_record_id(text: str) -> bool:
-    """Whether ``text`` is a well-formed record ID (and so safe to use as a file name stem)."""
-    return re.fullmatch(RECORD_ID_PATTERN, text) is not None
-
-
-def record_id_for(moment: datetime) -> str:
-    """The record ID for a pose taken at ``moment`` (microseconds keep IDs apart)."""
-    return moment.strftime("%Y%m%d-%H%M%S-%f")
 
 
 class AnimalFit(BaseModel):

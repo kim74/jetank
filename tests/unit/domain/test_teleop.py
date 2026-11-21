@@ -82,8 +82,10 @@ def test_status_serialises_to_json() -> None:
         "speeds": {"left": 0.25, "right": 0.5},
         "gripper": None,
         "arm": None,
+        "poses": [],
         "teach_enabled": False,
         "last_teach": None,
+        "scenes": None,
         "asleep": False,
         "error": None,
     }

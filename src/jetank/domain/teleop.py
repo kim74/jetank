@@ -5,8 +5,9 @@ Layer: domain
 
 Client → robot: :class:`DriveMessage` (sent repeatedly while driving, so it doubles as the
 heartbeat that keeps the drive watchdog fed), :class:`StopMessage`, :class:`GripperMessage`,
-:class:`ArmJogMessage` (sent repeatedly while an arm key is held), :class:`SleepMessage` and
-:class:`TeachMessage`.
+:class:`ArmJogMessage` (sent repeatedly while an arm key is held), :class:`PoseMessage`,
+:class:`SleepMessage`, :class:`TeachMessage`, :class:`~jetank.domain.scenes.SceneMessage` and
+:class:`PingMessage`.
 Robot → client: :class:`TeleopStatus` after every message and on connect.
 """
 
@@ -15,14 +16,26 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Final, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from jetank.domain.models import DriveCommand, TrackSpeeds, UnitSpeed
+from jetank.domain.scenes import SceneMessage, SceneReport
 from jetank.domain.servo import JointName, Opening, ServoPosition
 from jetank.domain.teaching import GraspRecord, GraspResult, RecordId, TeachLabels, TeachStage
 from jetank.errors import ProtocolError
 
 _MESSAGE: Final = ConfigDict(frozen=True, extra="forbid")
+
+#: Name of a configured arm pose, e.g. ``search``.
+PoseName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,39}$")]
 
 
 class DriveMessage(BaseModel):
@@ -96,6 +109,26 @@ class ArmJogMessage(BaseModel):
     direction: Literal[-1, 1]
 
 
+class PoseMessage(BaseModel):
+    """Request to move the arm to a configured pose (``arm.poses``). Accepted from the driver only.
+
+    Every joint of the pose moves at the arm's bounded speed and then keeps holding there.
+    """
+
+    model_config = _MESSAGE
+
+    type: Literal["pose"]
+    name: PoseName
+
+
+class PingMessage(BaseModel):
+    """Request for a fresh status, e.g. while scenes are recorded automatically. Any client."""
+
+    model_config = _MESSAGE
+
+    type: Literal["ping"]
+
+
 class SleepMessage(BaseModel):
     """Request to put the robot to sleep. Accepted from the driver only.
 
@@ -122,11 +155,27 @@ class TeachMessage(BaseModel):
 
 
 AnyClientMessage = (
-    DriveMessage | StopMessage | GripperMessage | ArmJogMessage | SleepMessage | TeachMessage
+    DriveMessage
+    | StopMessage
+    | GripperMessage
+    | ArmJogMessage
+    | PoseMessage
+    | SleepMessage
+    | TeachMessage
+    | SceneMessage
+    | PingMessage
 )
 ClientMessage = Annotated[
     Union[  # noqa: UP007
-        DriveMessage, StopMessage, GripperMessage, ArmJogMessage, SleepMessage, TeachMessage
+        DriveMessage,
+        StopMessage,
+        GripperMessage,
+        ArmJogMessage,
+        PoseMessage,
+        SleepMessage,
+        TeachMessage,
+        SceneMessage,
+        PingMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -224,8 +273,10 @@ class TeleopStatus(BaseModel):
         speeds: Track speeds last sent to the motors (after the speed limit).
         gripper: Gripper state, or ``None`` when the robot has no working gripper.
         arm: Arm state, or ``None`` when the robot has no working arm.
+        poses: Names of the configured arm poses a :class:`PoseMessage` can move to.
         teach_enabled: Whether poses can be recorded (:class:`TeachMessage`).
         last_teach: The last pose recorded in this session, if any.
+        scenes: Scene recording, or ``None`` when scenes cannot be recorded (no camera).
         asleep: Whether the robot was put to sleep (by request or after being idle) and no
             arm or gripper command has woken it since. The arm may still be on its way home.
         error: Why the last message was rejected, if it was.
@@ -239,7 +290,9 @@ class TeleopStatus(BaseModel):
     speeds: TrackSpeeds
     gripper: GripperReport | None = None
     arm: ArmReport | None = None
+    poses: list[PoseName] = Field(default_factory=list)
     teach_enabled: bool = False
     last_teach: TeachReport | None = None
+    scenes: SceneReport | None = None
     asleep: bool = False
     error: str | None = None

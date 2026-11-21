@@ -74,6 +74,7 @@ class VideoStream:
         # Replaced by a fresh event after each change, so waiting viewers wake exactly once.
         self._changed = asyncio.Event()
         self._latest: bytes | None = None
+        self._latest_frame: Frame | None = None
         self._sequence = 0
         self._failure: str | None = None
         self._stopped = False
@@ -87,6 +88,11 @@ class VideoStream:
         be stale; it is dropped instead.
         """
         return None if self._failure is not None else self._latest
+
+    @property
+    def latest_frame(self) -> Frame | None:
+        """The camera frame behind :attr:`latest_jpeg`, uncompressed; ``None`` like it."""
+        return None if self._failure is not None else self._latest_frame
 
     @property
     def failed(self) -> bool:
@@ -104,8 +110,8 @@ class VideoStream:
             while True:
                 await self._has_viewers.wait()
                 started = loop.time()
-                data = await loop.run_in_executor(self._executor, self._capture)
-                self._latest = data
+                frame, data = await loop.run_in_executor(self._executor, self._capture)
+                self._latest, self._latest_frame = data, frame
                 self._sequence += 1
                 self._notify()
                 await asyncio.sleep(max(0.0, self._period_s - (loop.time() - started)))
@@ -123,8 +129,9 @@ class VideoStream:
         """Stop the capture thread without waiting for a read in progress. Idempotent."""
         self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def _capture(self) -> bytes:
-        return self._encode(self._camera.read())
+    def _capture(self) -> tuple[Frame, bytes]:
+        frame = self._camera.read()
+        return frame, self._encode(frame)
 
     def _notify(self) -> None:
         changed, self._changed = self._changed, asyncio.Event()
@@ -158,3 +165,4 @@ class VideoStream:
             if self._viewers == 0:
                 self._has_viewers.clear()
                 self._latest = None  # capturing stops, so the last frame goes stale
+                self._latest_frame = None

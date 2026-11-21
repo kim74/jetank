@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from types import TracebackType
 
-    from jetank.domain.servo import JointCalibration, JointName, ServoState
+    from jetank.domain.servo import ArmPose, JointCalibration, JointName, ServoState
     from jetank.interfaces.servo import ServoBus
 
 logger = logging.getLogger(__name__)
@@ -195,6 +195,23 @@ class ArmController:
             (self.move(joint, cal.home_position) for joint, cal in self._joints.items()),
             default=0.0,
         )
+
+    def move_pose(self, pose: ArmPose) -> float:
+        """Start moving every joint of ``pose`` to its position, clamped to its limits.
+
+        Joints not in the pose are left as they are. Does not wait.
+
+        Returns:
+            Duration of the longest of the moves, in seconds.
+
+        Raises:
+            ConfigurationError: The pose moves a joint that has no calibration; nothing moves.
+            ServoError: A servo did not answer or reported a fault.
+        """
+        self._ensure_open()
+        for joint in pose.positions:
+            self._calibration(joint)  # check every joint before the first one moves
+        return max(self.move(joint, position) for joint, position in pose.positions.items())
 
     def rest(self) -> float:
         """Start moving every engaged joint home and keep holding. Does not wait.

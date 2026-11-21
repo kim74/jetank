@@ -11,6 +11,7 @@ from jetank.interfaces.i2c import I2CBus
 from jetank.interfaces.inference import InferenceEngine
 from jetank.interfaces.motors import MotorDriver
 from jetank.interfaces.power import PowerMonitor
+from jetank.interfaces.scene_store import SceneStore
 from jetank.interfaces.servo import SerialPort, ServoBus
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "InferenceEngine",
     "MotorDriver",
     "PowerMonitor",
+    "SceneStore",
     "SerialPort",
     "ServoBus",
 ]

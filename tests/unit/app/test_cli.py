@@ -49,7 +49,7 @@ def test_snapshot_unwritable_path_reports_error(
 
 
 def test_teleop_stops_and_closes_motors_on_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.drivers.fake import FakeMotorDriver
 
     motors = FakeMotorDriver()
@@ -59,8 +59,8 @@ def test_teleop_stops_and_closes_motors_on_ctrl_c(monkeypatch: pytest.MonkeyPatc
         served.append(True)
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert served == [True]
     assert motors.closed
@@ -70,12 +70,12 @@ def test_teleop_stops_and_closes_motors_on_ctrl_c(monkeypatch: pytest.MonkeyPatc
 def test_teleop_warns_when_motors_are_fake(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
 
     async def interrupted_serve(self: object, on_ready: object = None) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     with caplog.at_level("INFO"):
         assert main(["teleop"]) == 0
     assert "FAKE motors" in caplog.text
@@ -118,7 +118,7 @@ def test_teleop_shows_mode_and_stops_motors_before_blanking_display(
 ) -> None:
     import asyncio
 
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.drivers.fake import FakeDisplay, FakeMotorDriver
 
     events: list[str] = []
@@ -136,9 +136,9 @@ def test_teleop_shows_mode_and_stops_motors_before_blanking_display(
             await asyncio.sleep(0.001)
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
-    monkeypatch.setattr(cli, "build_display", lambda _config: display)
-    monkeypatch.setattr(cli.TeleopServer, "serve", serve_until_status_shown)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(teleop_command, "build_display", lambda _config: display)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", serve_until_status_shown)
     assert main(["teleop"]) == 0
     assert display.history[0].lines[-1] == "teleop: waiting"
     assert events == ["display closed, motors closed=True"]
@@ -147,7 +147,7 @@ def test_teleop_shows_mode_and_stops_motors_before_blanking_display(
 def test_teleop_runs_without_a_working_display(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.drivers.fake import FakeMotorDriver
     from jetank.errors import HardwareError
 
@@ -161,9 +161,9 @@ def test_teleop_runs_without_a_working_display(
         served.append(True)
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
-    monkeypatch.setattr(cli, "build_display", missing)
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(teleop_command, "build_display", missing)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert served == [True]
     assert motors.closed
@@ -245,7 +245,7 @@ def test_gripper_missing_servo_exits_with_error(
 
 
 def test_teleop_gripper_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.domain.teleop import GripperAction, GripperMessage
     from jetank.drivers.fake import FakeMotorDriver, FakeServo, FakeServoBus
 
@@ -260,15 +260,15 @@ def test_teleop_gripper_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPa
 
     bus = RecordingBus(servos={4: FakeServo(position=900)})
 
-    async def serve_and_grip(self: cli.TeleopServer, on_ready: object = None) -> None:
+    async def serve_and_grip(self: teleop_command.TeleopServer, on_ready: object = None) -> None:
         session = self._session  # type: ignore[attr-defined]
         session.connect("a")
         session.handle("a", GripperMessage(type="gripper", action=GripperAction.CLOSE))
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
-    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
-    monkeypatch.setattr(cli.TeleopServer, "serve", serve_and_grip)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(teleop_command, "build_servo_bus", lambda _config: bus)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", serve_and_grip)
     assert main(["teleop"]) == 0
     assert bus.moves[-1].position == 610
     assert events == ["gripper limp, motors closed=True"]
@@ -278,7 +278,7 @@ def test_teleop_gripper_goes_limp_after_motors_stop(monkeypatch: pytest.MonkeyPa
 def test_teleop_runs_without_a_servo_bus(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.errors import HardwareError
 
     def missing(_config: object) -> object:
@@ -286,12 +286,12 @@ def test_teleop_runs_without_a_servo_bus(
 
     sessions: list[object] = []
 
-    async def interrupted_serve(self: cli.TeleopServer, on_ready: object = None) -> None:
+    async def interrupted_serve(self: teleop_command.TeleopServer, on_ready: object = None) -> None:
         sessions.append(self._session)  # type: ignore[attr-defined]
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_servo_bus", missing)
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command, "build_servo_bus", missing)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert "without gripper and arm" in caplog.text
     status = sessions[0].status("x")  # type: ignore[attr-defined]
@@ -302,7 +302,7 @@ def test_teleop_runs_without_a_servo_bus(
 def test_teleop_arm_jogs_then_parks_at_home_after_motors_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.domain.servo import JointName
     from jetank.domain.teleop import ArmJogMessage
     from jetank.drivers.fake import FakeMotorDriver, FakeServo, FakeServoBus
@@ -318,18 +318,18 @@ def test_teleop_arm_jogs_then_parks_at_home_after_motors_stop(
 
     bus = RecordingBus(servos={3: FakeServo(position=479), 4: FakeServo(position=900)})
 
-    async def serve_and_jog(self: cli.TeleopServer, on_ready: object = None) -> None:
+    async def serve_and_jog(self: teleop_command.TeleopServer, on_ready: object = None) -> None:
         session = self._session  # type: ignore[attr-defined]
         session.connect("a")
         message = ArmJogMessage(type="arm", joint=JointName.ELBOW, direction=1)
         assert session.handle("a", message).error is None
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: motors)
-    monkeypatch.setattr(cli, "build_servo_bus", lambda _config: bus)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: motors)
+    monkeypatch.setattr(teleop_command, "build_servo_bus", lambda _config: bus)
     sleeps: list[float] = []
-    monkeypatch.setattr(cli.TeleopServer, "serve", serve_and_jog)
-    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", serve_and_jog)
+    monkeypatch.setattr(teleop_command.time, "sleep", sleeps.append)
     assert main(["teleop"]) == 0
     jog, park = bus.moves[-2:]
     assert jog.position == 479 + 15  # default jog step, elbow extends
@@ -342,7 +342,7 @@ def test_teleop_arm_jogs_then_parks_at_home_after_motors_stop(
 def test_teleop_runs_without_a_camera(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.errors import CameraError
 
     def missing(_config: object, _clock: object) -> object:
@@ -350,19 +350,19 @@ def test_teleop_runs_without_a_camera(
 
     videos: list[object] = []
 
-    async def interrupted_serve(self: cli.TeleopServer, on_ready: object = None) -> None:
+    async def interrupted_serve(self: teleop_command.TeleopServer, on_ready: object = None) -> None:
         videos.append(self._video)  # type: ignore[attr-defined]
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "build_camera", missing)
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command, "build_camera", missing)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert "without video" in caplog.text
     assert videos == [None]
 
 
 def test_teleop_closes_the_camera_after_the_motors_stop(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jetank.app import cli
+    from jetank.app import teleop_command
     from jetank.drivers.fake import FakeCamera, FakeMotorDriver
     from jetank.drivers.system_clock import SystemClock
 
@@ -378,14 +378,14 @@ def test_teleop_closes_the_camera_after_the_motors_stop(monkeypatch: pytest.Monk
             events.append("camera closed")
             super().close()
 
-    async def interrupted_serve(self: cli.TeleopServer, on_ready: object = None) -> None:
+    async def interrupted_serve(self: teleop_command.TeleopServer, on_ready: object = None) -> None:
         assert self._video is not None  # type: ignore[attr-defined]
         raise KeyboardInterrupt
 
     camera = RecordingCamera(8, 6, SystemClock())
-    monkeypatch.setattr(cli, "build_motor_driver", lambda _config: RecordingMotors())
-    monkeypatch.setattr(cli, "build_camera", lambda _config, _clock: camera)
-    monkeypatch.setattr(cli.TeleopServer, "serve", interrupted_serve)
+    monkeypatch.setattr(teleop_command, "build_motor_driver", lambda _config: RecordingMotors())
+    monkeypatch.setattr(teleop_command, "build_camera", lambda _config, _clock: camera)
+    monkeypatch.setattr(teleop_command.TeleopServer, "serve", interrupted_serve)
     assert main(["teleop"]) == 0
     assert events == ["motors closed", "camera closed"]
 

@@ -241,8 +241,12 @@ def test_latest_frame_is_offered_only_while_someone_watches() -> None:
             sent = await asyncio.wait_for(viewer.recv(), 5)
             assert video.latest_jpeg is not None
             assert video.latest_jpeg >= sent  # the newest frame, possibly newer than received
+            frame = video.latest_frame
+            assert frame is not None
+            assert frame.image.shape == (6, 8, 3)
         await asyncio.sleep(0.1)  # let the server notice the viewer left
         assert video.latest_jpeg is None  # capture stopped: an old frame would be stale
+        assert video.latest_frame is None
 
     run_with_video(video, body)
     video.close()

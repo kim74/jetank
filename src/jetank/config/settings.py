@@ -24,6 +24,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from jetank.config.base import SECTION as _SECTION
 from jetank.config.base import Backend
+from jetank.config.recording import ScenesConfig, TeachConfig
 from jetank.config.servos import ArmConfig, GripperConfig, ServosConfig
 from jetank.domain.coco import COCO_CLASSES
 from jetank.domain.detection import Response
@@ -280,20 +281,6 @@ class EventsConfig(BaseModel):
     label_cooldown_s: float = Field(default=30.0, ge=0.0)
 
 
-class TeachConfig(BaseModel):
-    """Recording of taught grasp poses from the teleop page.
-
-    Attributes:
-        directory: Where grasp records (JSON) and their camera images (JPEG) are written.
-            Relative paths are resolved from the working directory. The images show your
-            home, so keep the directory out of git (``data/`` is ignored).
-    """
-
-    model_config = _SECTION
-
-    directory: Path = Path("data/grasps")
-
-
 class JetankSettings(BaseSettings):
     """Top-level configuration for the robot."""
 
@@ -318,6 +305,7 @@ class JetankSettings(BaseSettings):
     tracker: TrackerConfig = TrackerConfig()
     events: EventsConfig = EventsConfig()
     teach: TeachConfig = TeachConfig()
+    scenes: ScenesConfig = ScenesConfig()
 
     @model_validator(mode="after")
     def _gripper_is_not_an_arm_joint(self) -> JetankSettings:

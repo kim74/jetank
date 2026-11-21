@@ -72,6 +72,13 @@ arm:                      # measured by hand 2026-10-31; joints not listed can n
 teach:                    # poses recorded with the teleop page's Teach panel
   directory: data/grasps  # JSON + JPEG per pose; the photos show your home, keep them out of git
 
+scenes:                   # camera scenes recorded with the teleop page's Scenes panel (training data)
+  directory: data/scenes  # JSON + JPEG per scene; the photos show your home, keep them out of git
+  jpeg_quality: 95        # sharper than the live video: compression artefacts hurt training
+  auto_period_s: 2.0      # "Auto" records one scene this often...
+  auto_limit_s: 300       # ...and stops by itself after this long
+
+
 camera:
   backend: hardware       # IMX219 on CAM0
   sensor_id: 0
