@@ -78,6 +78,12 @@ scenes:                   # camera scenes recorded with the teleop page's Scenes
   auto_period_s: 2.0      # "Auto" records one scene this often...
   auto_limit_s: 300       # ...and stops by itself after this long
 
+dataset:                  # detector training data made from the scenes (photos: keep out of git)
+  labelling_directory: data/labelling  # `jetank scenes export` -> label with X-AnyLabeling
+  directory: data/dataset # `jetank dataset build` writes the YOLO segmentation dataset here
+  val_fraction: 0.2       # share of the scenes for validation...
+  block_s: 20             # ...in whole blocks of this many seconds of recording (no near-twins
+  run_gap_s: 30           #    across the split); a pause this long starts a new run
 
 camera:
   backend: hardware       # IMX219 on CAM0

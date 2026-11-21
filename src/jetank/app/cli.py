@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jetank.app.arm_commands import cmd_arm_status, cmd_poses
+from jetank.app.dataset_commands import cmd_build_dataset, cmd_export_scenes
 from jetank.app.pose_review import DEFAULT_PORT as REVIEW_PORT
 from jetank.app.pose_review import cmd_review_poses
 from jetank.app.scene_commands import cmd_scenes
@@ -106,9 +107,12 @@ def _build_parser() -> argparse.ArgumentParser:
     scenes = commands.add_parser(
         "scenes",
         help="recorded scenes: 'summary' counts them per room, light and with or without toy "
-        "animals; 'review' serves a page to fix their labels and delete them (no robot needed)",
+        "animals; 'review' serves a page to fix their labels and delete them (no robot needed); "
+        "'export' copies the images into the labelling folder",
     )
-    scenes.add_argument("action", nargs="?", choices=["summary", "review"], default="summary")
+    scenes.add_argument(
+        "action", nargs="?", choices=["summary", "review", "export"], default="summary"
+    )
     scenes.add_argument(
         "--directory", type=Path, help="scenes directory (default: scenes.directory)"
     )
@@ -122,6 +126,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=SCENE_REVIEW_PORT,
         help="'review': TCP port (default: %(default)s)",
+    )
+    scenes.add_argument(
+        "--to", type=Path, help="'export': labelling folder (default: dataset.labelling_directory)"
+    )
+    dataset = commands.add_parser(
+        "dataset",
+        help="'build': check the outlines drawn on the exported scenes and write the YOLO "
+        "segmentation dataset for training",
+    )
+    dataset.add_argument("action", choices=["build"])
+    dataset.add_argument("--scenes", type=Path, help="scenes directory (default: scenes.directory)")
+    dataset.add_argument(
+        "--labelling",
+        type=Path,
+        help="folder with the drawings (default: dataset.labelling_directory)",
+    )
+    dataset.add_argument(
+        "--to", type=Path, help="dataset folder to write (default: dataset.directory)"
     )
     return parser
 
@@ -234,6 +256,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_review_poses(settings, args.directory, args.host, args.port)
         if args.command == "poses":
             return cmd_poses(settings, args.directory)
+        if args.command == "scenes" and args.action == "export":
+            return cmd_export_scenes(settings, args.directory, args.to)
+        if args.command == "dataset":
+            return cmd_build_dataset(settings, args.scenes, args.labelling, args.to)
         if args.command == "scenes" and args.action == "review":
             return cmd_review_scenes(settings, args.directory, args.host, args.port)
         if args.command == "scenes":

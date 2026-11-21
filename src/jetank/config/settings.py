@@ -24,6 +24,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from jetank.config.base import SECTION as _SECTION
 from jetank.config.base import Backend
+from jetank.config.dataset import DatasetConfig
 from jetank.config.recording import ScenesConfig, TeachConfig
 from jetank.config.servos import ArmConfig, GripperConfig, ServosConfig
 from jetank.domain.coco import COCO_CLASSES
@@ -306,6 +307,7 @@ class JetankSettings(BaseSettings):
     events: EventsConfig = EventsConfig()
     teach: TeachConfig = TeachConfig()
     scenes: ScenesConfig = ScenesConfig()
+    dataset: DatasetConfig = DatasetConfig()
 
     @model_validator(mode="after")
     def _gripper_is_not_an_arm_joint(self) -> JetankSettings:

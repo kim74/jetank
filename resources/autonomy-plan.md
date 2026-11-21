@@ -345,16 +345,16 @@ the structure is the same.
 - [x] **Toys:** the family's box of animals for training and tests; most fit, the elephant
       probably doesn't.
 - [x] **Mission text:** `CLAUDE.md` now describes the tidy-up as the current goal.
+- [x] **Free space:** floor segmentation and the virtual range scan; one YOLO-seg model labels
+      `toy_animal` and `floor` (decided 2026-11-21).
+- [x] **Labels:** one class `toy_animal` first, plus `floor`.
+- [x] **Labelling and training:** X-AnyLabeling on the PC (`jetank scenes export`, then
+      `jetank dataset build`); the model is trained on the Jetson's GPU in its own venv.
+- [x] **Who writes what:** Claude writes the decoder, the TensorRT adapter and the tracker; the
+      user reviews.
 
 **Still open:**
 
-- [ ] **Free space:** floor segmentation and the virtual range scan (recommended), or the simpler
-      blocked/free classifier first?
-- [ ] **Labels:** one class `toy_animal` first (recommended), or species from the start?
-- [ ] **Training:** where to train the detector (your PC with a GPU, or a cloud notebook), and
-      which labelling tool.
 - [ ] **Drop-off:** a flat tray or mat with a marker (recommended), or a box?
 - [ ] **Extra markers** for the pose estimate (M7): how many, and where.
 - [ ] **Allowed area:** which rooms the robot may enter.
-- [ ] **Who writes what:** the guide puts the tracker, the decoder and the state machine in "you"
-      mode, so Claude reviews rather than implements those, unless decided otherwise.

@@ -1,6 +1,7 @@
 """Typed runtime configuration (pydantic-settings)."""
 
 from jetank.config.base import Backend
+from jetank.config.dataset import DatasetConfig
 from jetank.config.recording import ScenesConfig, TeachConfig
 from jetank.config.servos import ArmConfig, GripperConfig, ServosConfig
 from jetank.config.settings import (
@@ -22,6 +23,7 @@ __all__ = [
     "ArmConfig",
     "Backend",
     "CameraConfig",
+    "DatasetConfig",
     "DetectorConfig",
     "DisplayConfig",
     "DriveConfig",
